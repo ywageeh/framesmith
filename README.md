@@ -77,7 +77,8 @@ A few details worth knowing:
 - **Preview and export share one code path.** `render()` takes a scale factor. The preview
   draws at `fit × devicePixelRatio` and the export at 1–3×, so what you see is what you get,
   pixel for pixel.
-- **The tilt is a real perspective projection.** It walks the *output* columns, inverts the
+- **The tilt is a real perspective projection, supersampled.** It warps a 2× card and
+  downsamples, so tilted text stays crisp. It walks the *output* columns, inverts the
   projection to find the source column each one sees, and samples it. That means no seams and
   no overlap. The result is fitted back into the original card box, so tilting never changes
   the layout.

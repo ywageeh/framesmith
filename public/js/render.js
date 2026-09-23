@@ -1,7 +1,7 @@
 // Renderer: background → shadow → (stack) → card (chrome + shot + annotations) → tilt.
 // One code path draws both the live preview (small scale) and the export (1–3x).
 
-import { computeLayout, tiltProjector, tiltQuad } from './layout.js';
+import { computeLayout, tiltProjector, tiltQuad, MAX_PIXELS } from './layout.js';
 import { paintBackground } from './backgrounds.js';
 import { inkUnit, fontSize, textBox, stepRadius, SIZES, handles, bounds } from './annotations.js';
 
@@ -354,7 +354,7 @@ function castShadow(ctx, path, strength, unit) {
 
 /**
  * Draw the whole composition into `ctx` (already sized to L.W*s × L.H*s).
- * @param {object} opts { s, flat, selectedId, transparentChecker }
+ * @param {object} opts { s, flat, selectedId, supersample }
  */
 export function render(ctx, doc, shot, assets, opts = {}) {
   const s = opts.s || 1;
@@ -370,14 +370,19 @@ export function render(ctx, doc, shot, assets, opts = {}) {
     grainOn: style.grain,
   });
 
-  const card = renderCard(doc, shot, L, s, opts.selectedId);
+  const tilt = opts.flat ? 0 : style.tilt || 0;
   const cx = L.card.x * s;
   const cy = L.card.y * s;
-  const cw = card.width;
-  const ch = card.height;
+  const cw = Math.round(L.card.w * s);
+  const ch = Math.round(L.card.h * s);
   const r = L.radius * s;
   const unit = L.u * s;
-  const tilt = opts.flat ? 0 : style.tilt || 0;
+  // The tilt warp resamples, so it works on a 2x card and downsamples at the end
+  // (supersampling) to keep text crisp. Capped to stay within the canvas budget.
+  const ss = tilt
+    ? (opts.supersample ?? Math.max(1, Math.min(2, Math.sqrt(MAX_PIXELS / Math.max(1, cw * ch)))))
+    : 1;
+  const card = renderCard(doc, shot, L, s * ss, opts.selectedId);
 
   if (style.frame === 'stack') {
     // Two ghost cards peeking out above.
@@ -406,7 +411,8 @@ export function render(ctx, doc, shot, assets, opts = {}) {
     return L;
   }
 
-  // Tilted: warp the card column by column into a layer, add a sheen, composite.
+  // Tilted: warp the (supersampled) card column by column into a layer, add a sheen,
+  // then downsample onto the composition.
   const q = tiltQuad(cw, ch, tilt);
   castShadow(
     ctx,
@@ -418,28 +424,38 @@ export function render(ctx, doc, shot, assets, opts = {}) {
     style.shadow,
     unit,
   );
-  const layer = canvas(cw, ch);
+  const sw = card.width;
+  const sh = card.height;
+  const layer = canvas(sw, sh);
   const lc = layer.getContext('2d');
-  const proj = tiltProjector(cw, ch, tilt);
+  const proj = tiltProjector(sw, sh, tilt);
+  const sq = tiltQuad(sw, sh, tilt);
+  lc.imageSmoothingEnabled = true;
   lc.imageSmoothingQuality = 'high';
   // Walk output columns and sample the source column each one sees: no seams, no overlap.
-  const x0 = Math.floor(Math.min(q[0].x, q[3].x));
-  const x1 = Math.ceil(Math.max(q[1].x, q[2].x));
+  // The fractional source x lets the browser interpolate between neighbouring columns.
+  const x0 = Math.floor(Math.min(sq[0].x, sq[3].x));
+  const x1 = Math.ceil(Math.max(sq[1].x, sq[2].x));
   for (let ox = x0; ox < x1; ox++) {
     const m = proj.inverse(ox + 0.5);
     if (!m) continue;
-    const dh = ch * m.scale;
-    lc.drawImage(card, Math.min(cw - 1, Math.floor(m.sx)), 0, 1, ch, ox, ch / 2 - dh / 2, 1, dh);
+    const dh = sh * m.scale;
+    const sx = Math.min(sw - 1, Math.max(0, m.sx - 0.5));
+    lc.drawImage(card, sx, 0, 1, sh, ox, sh / 2 - dh / 2, 1, dh);
   }
   lc.globalCompositeOperation = 'source-atop';
-  const near = tilt > 0 ? 0 : cw;
-  const g = lc.createLinearGradient(near, 0, cw - near, 0);
+  const near = tilt > 0 ? 0 : sw;
+  const g = lc.createLinearGradient(near, 0, sw - near, 0);
   g.addColorStop(0, 'rgba(255,255,255,0.14)');
   g.addColorStop(0.5, 'rgba(255,255,255,0)');
   g.addColorStop(1, 'rgba(0,0,0,0.08)');
   lc.fillStyle = g;
-  lc.fillRect(0, 0, cw, ch);
-  ctx.drawImage(layer, cx, cy);
+  lc.fillRect(0, 0, sw, sh);
+  ctx.save();
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(layer, cx, cy, cw, ch);
+  ctx.restore();
   return L;
 }
 
