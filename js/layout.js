@@ -90,21 +90,34 @@ export function computeLayout(imgW, imgH, style) {
  */
 export function tiltProjector(w, h, deg) {
   const t = (deg * Math.PI) / 180;
+  const sin = Math.sin(t);
+  const cos = Math.cos(t);
   const D = 2.4 * Math.max(w, h);
   const raw = (x) => {
     const X = x - w / 2;
-    const s = D / (D + X * Math.sin(t));
-    return { x: X * Math.cos(t) * s, scale: s };
+    const s = D / (D + X * sin);
+    return { x: X * cos * s, scale: s };
   };
   const a = raw(0);
   const b = raw(w);
   const spanW = Math.abs(b.x - a.x);
   const maxScale = Math.max(a.scale, b.scale);
   const fit = Math.min(w / spanW, 1 / maxScale);
-  return (x) => {
+  const project = (x) => {
     const p = raw(x);
     return { x: w / 2 + p.x * fit, scale: p.scale * fit };
   };
+  /** Output column → { src x, vertical scale }, or null outside the card. */
+  project.inverse = (ox) => {
+    const u = (ox - w / 2) / fit;
+    const denom = cos * D - u * sin;
+    if (denom <= 0) return null;
+    const X = (u * D) / denom;
+    const sx = X + w / 2;
+    if (sx < 0 || sx >= w) return null;
+    return { sx, scale: (D / (D + X * sin)) * fit };
+  };
+  return project;
 }
 
 /** The four corners of a tilted card, in card-local coordinates. */

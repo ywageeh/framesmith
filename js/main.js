@@ -1,4 +1,4 @@
-import { computeLayout, ASPECTS, FRAMES, safeScale, clamp } from './layout.js';
+import { computeLayout, ASPECTS, safeScale } from './layout.js';
 import { GRADIENTS, MESHES, SOLIDS, paintBackground } from './backgrounds.js';
 import { render, exportBlob, measureText } from './render.js';
 import {
@@ -6,7 +6,7 @@ import {
 } from './annotations.js';
 import { History } from './history.js';
 import { findTrim } from './trim.js';
-import { demoShot } from './demo.js';
+import { demoShot, demoAnnotations } from './demo.js';
 
 const $ = (s) => document.querySelector(s);
 const el = (tag, props = {}, ...kids) => {
@@ -212,13 +212,22 @@ const view = $('#view');
 const vctx = view.getContext('2d');
 const stage = $('#stage');
 let raf = 0;
+let rafFallback = 0;
 
 function scheduleRender() {
-  if (!raf) raf = requestAnimationFrame(draw);
+  if (raf) return;
+  raf = requestAnimationFrame(draw);
+  // Background tabs pause rAF; still paint so export/thumbnail state never goes stale.
+  rafFallback = setTimeout(() => {
+    if (!raf) return;
+    cancelAnimationFrame(raf);
+    draw();
+  }, 150);
 }
 
 function draw() {
   raf = 0;
+  clearTimeout(rafFallback);
   if (!doc.imageId) return;
   const shot = shotFor();
   const L = computeLayout(shot.w, shot.h, doc.style);
@@ -410,15 +419,33 @@ function frameSvg(id) {
   return '';
 }
 
+const FRAME_FAMILIES = [
+  { id: 'none', label: 'None' },
+  { id: 'mac', label: 'macOS' },
+  { id: 'browser', label: 'Browser' },
+  { id: 'glass', label: 'Glass' },
+  { id: 'stack', label: 'Stack' },
+];
+const familyOf = (frame) => frame.replace(/-(light|dark)$/, '');
+const hasChrome = (frame) => /^(mac|browser)-/.test(frame);
+
 function buildFrames() {
   const host = $('#frames');
-  FRAMES.forEach((f) => {
+  FRAME_FAMILIES.forEach((f) => {
     const b = el('button', { className: 'frame-tile', type: 'button' });
     b.dataset.v = f.id;
     b.setAttribute('role', 'radio');
-    b.innerHTML = `<span class="ft">${frameSvg(f.id)}</span><span>${f.label}</span>`;
-    b.addEventListener('click', () => setStyle({ frame: f.id }));
+    const preview = f.id === 'mac' || f.id === 'browser' ? `${f.id}-light` : f.id;
+    b.innerHTML = `<span class="ft">${frameSvg(preview)}</span><span>${f.label}</span>`;
+    b.addEventListener('click', () => {
+      const dark = doc.style.frame.endsWith('-dark');
+      setStyle({ frame: f.id === 'mac' || f.id === 'browser' ? `${f.id}-${dark ? 'dark' : 'light'}` : f.id });
+    });
     host.append(b);
+  });
+  $('#chk-dark-chrome').addEventListener('change', (e) => {
+    const fam = familyOf(doc.style.frame);
+    setStyle({ frame: `${fam}-${e.target.checked ? 'dark' : 'light'}` });
   });
   const title = $('#frame-title');
   title.addEventListener('input', () => setStyle({ frameTitle: title.value }, false));
@@ -605,10 +632,11 @@ function syncUI() {
   buildSwatches();
   $('#chk-grain').checked = style.grain;
   $('#chk-grain').disabled = style.bg.kind === 'none';
-  radios($('#frames'), style.frame);
-  const titled = style.frame.startsWith('mac') || style.frame.startsWith('browser');
+  radios($('#frames'), familyOf(style.frame));
+  const titled = hasChrome(style.frame);
+  $('#chrome-opts').hidden = !titled;
+  $('#chk-dark-chrome').checked = style.frame.endsWith('-dark');
   const title = $('#frame-title');
-  title.hidden = !titled;
   title.placeholder = style.frame.startsWith('browser') ? 'framesmith.app' : 'Window title (optional)';
   if (document.activeElement !== title) title.value = style.frameTitle || '';
   radios($('#aspects'), style.aspect);
@@ -958,6 +986,7 @@ function wire() {
   const open = () => fileInput.click();
   $('#btn-open').addEventListener('click', open);
   $('#hint-open').addEventListener('click', open);
+  $('#hint-open-touch').addEventListener('click', open);
   fileInput.addEventListener('change', () => {
     const f = fileInput.files[0];
     if (f) loadBlob(f, f.name);
@@ -1183,6 +1212,12 @@ async function boot() {
   }
   const demo = demoShot();
   addImage(demo, 'framesmith-sample', { user: false });
+  // Show what annotations look like before anyone has to discover the tab.
+  doc = { ...doc, annotations: demoAnnotations() };
+  history = new History(doc);
+  if (new URLSearchParams(location.search).get('tab') === 'annotate') setTab('annotate');
+  syncUI();
+  scheduleRender();
   receiveShared();
   if ('serviceWorker' in navigator && location.protocol === 'https:') {
     navigator.serviceWorker.register('/sw.js').catch(() => {});

@@ -92,8 +92,9 @@
           <textarea id="text-editor" class="text-editor" rows="1" spellcheck="false" aria-label="Label text" hidden></textarea>
         </div>
         <div class="stage-hint" id="stage-hint">
-          <span><kbd>Ctrl</kbd> <kbd>V</kbd> to paste a screenshot, drop a file, or</span>
+          <span class="hint-lead"><kbd>Ctrl</kbd> <kbd>V</kbd> to paste a screenshot, drop a file, or</span>
           <button class="link" id="hint-open">browse</button>
+          <button class="link touch-only" id="hint-open-touch">Choose a screenshot to frame</button>
           <span class="capture-only">·</span>
           <button class="link capture-only" id="hint-capture">capture your screen</button>
         </div>
@@ -135,7 +136,14 @@
           <section class="group">
             <h2><span class="num">iii</span>Frame</h2>
             <div class="frames" id="frames"></div>
-            <input class="text-input" id="frame-title" type="text" maxlength="80" placeholder="Window title" hidden />
+            <div class="chrome-opts" id="chrome-opts">
+              <input class="text-input" id="frame-title" type="text" maxlength="80" placeholder="Window title" />
+              <label class="toggle">
+                <input type="checkbox" id="chk-dark-chrome" />
+                <span class="track"></span>
+                <span>Dark title bar</span>
+              </label>
+            </div>
           </section>
 
           <section class="group">
@@ -186,7 +194,7 @@
         </div>
 
         <footer class="panel-foot">
-          <span class="private"><svg><use href="#i-lock" /></svg>Runs in your browser. Nothing is uploaded.</span>
+          <span class="private"><svg><use href="#i-lock" /></svg>Private: nothing leaves your browser</span>
           <button class="link" id="btn-keys">Shortcuts <kbd>?</kbd></button>
         </footer>
       </aside>

@@ -421,14 +421,15 @@ export function render(ctx, doc, shot, assets, opts = {}) {
   const layer = canvas(cw, ch);
   const lc = layer.getContext('2d');
   const proj = tiltProjector(cw, ch, tilt);
-  const step = Math.max(1, Math.round(cw / 1400));
   lc.imageSmoothingQuality = 'high';
-  for (let x = 0; x < cw; x += step) {
-    const a = proj(x);
-    const b = proj(Math.min(cw, x + step));
-    const sc = (a.scale + b.scale) / 2;
-    const dh = ch * sc;
-    lc.drawImage(card, x, 0, Math.min(step, cw - x), ch, a.x, ch / 2 - dh / 2, b.x - a.x + 0.6, dh);
+  // Walk output columns and sample the source column each one sees: no seams, no overlap.
+  const x0 = Math.floor(Math.min(q[0].x, q[3].x));
+  const x1 = Math.ceil(Math.max(q[1].x, q[2].x));
+  for (let ox = x0; ox < x1; ox++) {
+    const m = proj.inverse(ox + 0.5);
+    if (!m) continue;
+    const dh = ch * m.scale;
+    lc.drawImage(card, Math.min(cw - 1, Math.floor(m.sx)), 0, 1, ch, ox, ch / 2 - dh / 2, 1, dh);
   }
   lc.globalCompositeOperation = 'source-atop';
   const near = tilt > 0 ? 0 : cw;

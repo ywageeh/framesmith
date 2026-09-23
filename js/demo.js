@@ -1,5 +1,14 @@
 // A procedurally drawn sample screenshot so the editor is never empty on first visit.
 
+/** Annotations that ship with the sample, in its 1600×1000 pixel space. */
+export function demoAnnotations() {
+  return [
+    { id: 'demo-label', type: 'text', x: 1118, y: 356, text: 'Best month yet', color: '#ff4d2e', size: 'm' },
+    { id: 'demo-arrow', type: 'arrow', x1: 1350, y1: 424, x2: 1494, y2: 476, color: '#ff4d2e', size: 'm' },
+    { id: 'demo-redact', type: 'redact', x: 82, y: 912, w: 150, h: 46 },
+  ];
+}
+
 const F = '"Geist", system-ui, sans-serif';
 
 export function demoShot() {

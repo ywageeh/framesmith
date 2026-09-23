@@ -1,0 +1,10 @@
+{
+  "name": "framesmith",
+  "private": true,
+  "type": "module",
+  "description": "Beautiful screenshots in the browser. Zero dependencies.",
+  "scripts": {
+    "test": "node --test \"tests/*.test.js\"",
+    "dev": "python -m http.server 5190"
+  }
+}
