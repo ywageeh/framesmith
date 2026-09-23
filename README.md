@@ -30,10 +30,17 @@ uploads nothing and is fast enough to stay part of your posting routine.
   installed.
 - **Looks.** One-click presets rendered live *with your own screenshot*, so you can see the
   result before you pick it.
-- **Backgrounds.** Mesh gradients, linear gradients, solids with a custom picker, a blurred copy
-  of your screenshot, your own wallpaper, or transparent. Film grain is optional.
-- **Frames.** macOS window, browser window with an editable URL (light or dark), glass border
-  and stacked cards.
+- **Match backgrounds.** Framesmith reads the accent colours out of your screenshot and builds a
+  mesh that belongs with it, in soft, vivid, deep or duotone. Every shot gets its own palette.
+- **More backgrounds.** Mesh gradients, linear gradients, solids with a custom picker, a blurred
+  copy of your screenshot, your own wallpaper, or transparent. Film grain is optional.
+- **Frames.** macOS window, browser window with an editable URL, a phone with bezel and
+  dynamic island (light or dark), glass border and stacked cards. Tall screenshots get the
+  phone automatically, and the looks adapt too.
+- **Crop and place.** Crop with ratio lock and auto-trim (<kbd>C</kbd>). Drag the shot anywhere
+  on the canvas, or let it bleed off an edge, with centre snapping. Annotations stay pinned to
+  their pixels through every crop.
+- **Signature.** An optional `@handle` badge in a bottom corner.
 - **3D tilt.** A true perspective warp with a matching shadow and sheen. It's not a CSS trick,
   so it exports exactly as you see it.
 - **Canvas sizes.** Auto, 16:9 (X), 1.91:1 (Open Graph/LinkedIn), 4:3, 1:1, 4:5 and 9:16. The
@@ -42,12 +49,15 @@ uploads nothing and is fast enough to stay part of your posting routine.
 - **Annotate.** Tapered arrows, boxes, highlighter, text labels, auto-numbered steps,
   spotlight, and redaction that pixelates for real (the original pixels are not in the
   export). Everything is movable, reshapable and recolorable.
-- **Export.** PNG, JPEG or WebP at 1×/2×/3×. It shows the file size and warns when a PNG would
-  go over X's 5 MB limit. Copy to clipboard in one keystroke.
-- **Undo everything.** Full undo/redo history, keyboard-first (`V A R H T N B F`,
-  <kbd>⌘Z</kbd>, <kbd>⌘C</kbd>, <kbd>⌘S</kbd>, <kbd>?</kbd> for the cheat sheet).
-- **Remembers you.** Your last style and saved styles persist locally. Works offline as an
-  installable PWA, with light and dark themes.
+- **Export.** Auto picks PNG, or switches to JPEG/WebP when a PNG would go over X's 5 MB upload
+  limit and tells you what it saved. PNG, JPEG or WebP are also available at 1×/2×/3×. Copy to
+  clipboard in one keystroke.
+- **Undo everything.** Full undo/redo history with Undo buttons right in the notifications,
+  keyboard-first (`V A R H T N B F C`, <kbd>⌘Z</kbd>, <kbd>⌘C</kbd>, <kbd>⌘S</kbd>, <kbd>?</kbd>
+  for the cheat sheet).
+- **Picks up where you left off.** Your last screenshot, crop, annotations and style come back
+  after a reload (stored in IndexedDB on your device). Saved styles persist too. Works offline
+  as an installable PWA, with light and dark themes.
 
 ## How it's built
 
@@ -64,6 +74,9 @@ public/
     render.js         one renderer for preview and export (background → shadow → card → tilt)
     backgrounds.js    procedural gradients, meshes, grain, blur
     annotations.js    annotation model, hit-testing, handles (pure)
+    crop.js           crop rectangle math with ratio lock (pure)
+    palette.js        accent-colour extraction + Match background builder (pure)
+    session.js        last-session persistence in IndexedDB
     trim.js           uniform-border detection (pure)
     history.js        snapshot undo/redo (pure)
     demo.js           a hand-drawn sample screenshot so first load is never empty
@@ -85,6 +98,9 @@ A few details worth knowing:
 - **Shadows use an off-canvas trick.** The card shape is drawn 50,000 px off-screen and only
   its shadow is offset back into view, so translucent frames and rounded corners never show a
   fill behind them.
+- **Match reads colour, not area.** Screenshots are mostly white and grey UI, so pixels are
+  binned and scored by saturation squared times frequency. The accent colour wins over the
+  page background, and near-duplicate hues merge. Grey UIs fall back to a warm palette.
 - **Canvas size is capped at 16 MP**, Safari's limit, so large 3× exports never fail silently.
   The export menu shows the capped size.
 

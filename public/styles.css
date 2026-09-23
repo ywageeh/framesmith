@@ -406,9 +406,11 @@ kbd {
 
 .stage-hint {
   position: absolute;
-  left: 50%;
+  left: 16px;
+  right: 16px;
+  margin-inline: auto;
+  width: fit-content;
   bottom: 18px;
-  translate: -50% 0;
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -960,9 +962,11 @@ input[type='range'].centered::-moz-range-track {
 /* crop toolbar */
 .crop-bar {
   position: absolute;
-  left: 50%;
+  left: 12px;
+  right: 12px;
+  margin-inline: auto;
+  width: fit-content;
   bottom: 16px;
-  translate: -50% 0;
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -1293,6 +1297,9 @@ input[type='range'].centered::-moz-range-track {
   .crop-bar {
     bottom: 8px;
     gap: 8px;
+  }
+  .app[data-mode='crop'] {
+    grid-template-rows: var(--bar-h) minmax(460px, 72dvh) auto;
   }
 }
 

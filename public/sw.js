@@ -1,5 +1,5 @@
 // Framesmith service worker: offline app shell + "Share to Framesmith" on mobile.
-const VERSION = 'fs-v2';
+const VERSION = 'fs-v3';
 const SHELL = [
   '/',
   '/styles.css',
@@ -12,6 +12,9 @@ const SHELL = [
   '/js/history.js',
   '/js/trim.js',
   '/js/demo.js',
+  '/js/crop.js',
+  '/js/palette.js',
+  '/js/session.js',
   '/icons/icon.svg',
   '/icons/icon-192.png',
 ];
