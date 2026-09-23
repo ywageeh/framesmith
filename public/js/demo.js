@@ -5,7 +5,6 @@ export function demoAnnotations() {
   return [
     { id: 'demo-label', type: 'text', x: 1118, y: 356, text: 'Best month yet', color: '#ff4d2e', size: 'm' },
     { id: 'demo-arrow', type: 'arrow', x1: 1350, y1: 424, x2: 1494, y2: 476, color: '#ff4d2e', size: 'm' },
-    { id: 'demo-redact', type: 'redact', x: 82, y: 912, w: 150, h: 46 },
   ];
 }
 

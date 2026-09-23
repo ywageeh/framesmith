@@ -2,10 +2,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { computeLayout, tiltProjector, tiltQuad, safeScale, MAX_PIXELS, normRect, distToSegment } from '../js/layout.js';
-import { findTrim } from '../js/trim.js';
-import { History } from '../js/history.js';
-import { pick, moveBy, dragHandle, nextStep, isDegenerate, handles, bounds } from '../js/annotations.js';
+import { computeLayout, tiltProjector, tiltQuad, safeScale, MAX_PIXELS, normRect, distToSegment } from '../public/js/layout.js';
+import { findTrim } from '../public/js/trim.js';
+import { History } from '../public/js/history.js';
+import { pick, moveBy, dragHandle, nextStep, isDegenerate, handles, bounds } from '../public/js/annotations.js';
 
 const base = { frame: 'none', padding: 10, radius: 12, aspect: 'auto', tilt: 0 };
 

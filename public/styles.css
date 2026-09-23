@@ -883,6 +883,11 @@ input[type='range'].centered::-moz-range-track {
   cursor: pointer;
   width: fit-content;
 }
+.toggle .hint {
+  color: var(--ink-3);
+  font-weight: 450;
+  margin-left: 4px;
+}
 .toggle input {
   position: absolute;
   opacity: 0;

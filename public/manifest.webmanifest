@@ -1,0 +1,31 @@
+{
+  "name": "Framesmith",
+  "short_name": "Framesmith",
+  "description": "Paste a screenshot, get a share-ready image. Backgrounds, window frames, 3D tilt, arrows and redaction. Private: nothing leaves your device.",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f4efe6",
+  "theme_color": "#f4efe6",
+  "categories": ["productivity", "design", "utilities"],
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "/icons/icon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ],
+  "file_handlers": [
+    {
+      "action": "/",
+      "accept": { "image/png": [".png"], "image/jpeg": [".jpg", ".jpeg"], "image/webp": [".webp"], "image/gif": [".gif"] }
+    }
+  ],
+  "launch_handler": { "client_mode": "focus-existing" },
+  "share_target": {
+    "action": "/share",
+    "method": "POST",
+    "enctype": "multipart/form-data",
+    "params": { "files": [{ "name": "image", "accept": ["image/*"] }] }
+  }
+}

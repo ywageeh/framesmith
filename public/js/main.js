@@ -19,7 +19,7 @@ const el = (tag, props = {}, ...kids) => {
 
 const DEFAULT_STYLE = {
   bg: { kind: 'mesh', id: 'peach' },
-  grain: true,
+  grain: false,
   frame: 'mac-light',
   frameTitle: '',
   aspect: 'auto',
@@ -31,12 +31,12 @@ const DEFAULT_STYLE = {
 };
 
 const LOOKS = [
-  { name: 'Launch', style: { bg: { kind: 'mesh', id: 'peach' }, grain: true, frame: 'mac-light', aspect: '16:9', padding: 9, radius: 12, shadow: 55, tilt: 0 } },
+  { name: 'Launch', style: { bg: { kind: 'mesh', id: 'peach' }, grain: false, frame: 'mac-light', aspect: '16:9', padding: 9, radius: 12, shadow: 55, tilt: 0 } },
   { name: 'Night', style: { bg: { kind: 'mesh', id: 'aurora' }, grain: true, frame: 'mac-dark', aspect: '16:9', padding: 10, radius: 12, shadow: 70, tilt: -16 } },
   { name: 'Docs', style: { bg: { kind: 'solid', color: '#f4efe6' }, grain: false, frame: 'browser-light', aspect: 'auto', padding: 6, radius: 10, shadow: 30, tilt: 0 } },
   { name: 'Glass', style: { bg: { kind: 'gradient', id: 'lagoon' }, grain: false, frame: 'glass', aspect: '4:3', padding: 10, radius: 18, shadow: 40, tilt: 0 } },
-  { name: 'Poster', style: { bg: { kind: 'gradient', id: 'ember' }, grain: true, frame: 'stack', aspect: '4:5', padding: 12, radius: 14, shadow: 60, tilt: 0 } },
-  { name: 'Echo', style: { bg: { kind: 'blur' }, grain: true, frame: 'none', aspect: '1.91:1', padding: 8, radius: 14, shadow: 60, tilt: 14 } },
+  { name: 'Poster', style: { bg: { kind: 'gradient', id: 'ember' }, grain: false, frame: 'stack', aspect: '4:5', padding: 12, radius: 14, shadow: 60, tilt: 0 } },
+  { name: 'Echo', style: { bg: { kind: 'blur' }, grain: false, frame: 'none', aspect: '1.91:1', padding: 8, radius: 14, shadow: 60, tilt: 14 } },
 ];
 
 const TOOL_HELP = {
@@ -86,7 +86,7 @@ const ui = {
   draft: null,
   drag: null,
   exportType: store.get('fs:type', 'image/png'),
-  exportScale: store.get('fs:scale', 2),
+  exportScale: store.get('fs:scale', 1),
   view: null, // { L, fit }
   userImage: false,
 };
@@ -712,7 +712,13 @@ async function download() {
     a.click();
     a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 4000);
-    toast(`Saved ${Math.round(ui.view.L.W * opts.scale)} × ${Math.round(ui.view.L.H * opts.scale)} ${ext.toUpperCase()}`);
+    const mb = blob.size / 1048576;
+    const size = mb >= 1 ? `${mb.toFixed(1)} MB` : `${Math.max(1, Math.round(blob.size / 1024))} KB`;
+    toast(
+      mb > 5 && opts.type === 'image/png'
+        ? `Saved ${size} PNG. Over 5 MB: WebP is several times smaller`
+        : `Saved ${Math.round(ui.view.L.W * opts.scale)} × ${Math.round(ui.view.L.H * opts.scale)} ${ext.toUpperCase()} · ${size}`,
+    );
   } catch {
     toast('Export failed. Try a smaller size.');
   }
