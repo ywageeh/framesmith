@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Framesmith: beautiful screenshots, free</title>
+    <meta
+      name="description"
+      content="Paste a screenshot, get a share-ready image. Backgrounds, window frames, 3D tilt, arrows, redaction and exact social sizes, all in your browser, no account, nothing uploaded."
+    />
+    <meta name="theme-color" content="#f4efe6" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#1a1816" media="(prefers-color-scheme: dark)" />
+    <link rel="icon" href="/icons/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta property="og:title" content="Framesmith: beautiful screenshots, free" />
+    <meta property="og:description" content="Paste a screenshot, get a share-ready image. No account, nothing uploaded." />
+    <meta property="og:image" content="https://framesmith.pages.dev/og.png" />
+    <meta property="og:url" content="https://framesmith.pages.dev/" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Geist:wght@400..700&family=Instrument+Serif:ital@0;1&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/styles.css" />
+    <script type="module" src="/js/main.js"></script>
+  </head>
+  <body>
+    <div class="app" id="app" data-tab="style">
+      <header class="bar">
+        <a class="brand" href="/" aria-label="Framesmith home">
+          <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><use href="#i-mark" /></svg>
+          <span>Frame<em>smith</em></span>
+        </a>
+
+        <div class="bar-mid">
+          <button class="icon-btn" id="btn-undo" title="Undo (Ctrl+Z)" aria-label="Undo" disabled>
+            <svg><use href="#i-undo" /></svg>
+          </button>
+          <button class="icon-btn" id="btn-redo" title="Redo (Ctrl+Shift+Z)" aria-label="Redo" disabled>
+            <svg><use href="#i-redo" /></svg>
+          </button>
+          <span class="dims" id="dims" aria-live="polite"></span>
+        </div>
+
+        <div class="bar-end">
+          <button class="btn ghost" id="btn-open" title="Open an image (Ctrl+O)">
+            <svg><use href="#i-open" /></svg><span class="lbl">Open</span>
+          </button>
+          <button class="btn ghost" id="btn-copy" title="Copy image (Ctrl+C)">
+            <svg><use href="#i-copy" /></svg><span class="lbl">Copy</span>
+          </button>
+          <div class="split" id="export-split">
+            <button class="btn primary" id="btn-export" title="Download (Ctrl+S)">
+              <svg><use href="#i-download" /></svg><span class="lbl" id="export-label">Export</span>
+            </button>
+            <button class="btn primary caret" id="btn-export-menu" aria-haspopup="true" aria-expanded="false" aria-label="Export settings">
+              <svg><use href="#i-caret" /></svg>
+            </button>
+            <div class="popover" id="export-pop" hidden>
+              <p class="pop-title">Export</p>
+              <div class="field">
+                <span class="field-label">Format</span>
+                <div class="seg" id="seg-format" role="radiogroup" aria-label="Format">
+                  <button role="radio" data-v="image/png">PNG</button>
+                  <button role="radio" data-v="image/jpeg">JPEG</button>
+                  <button role="radio" data-v="image/webp">WebP</button>
+                </div>
+              </div>
+              <div class="field">
+                <span class="field-label">Size</span>
+                <div class="seg" id="seg-scale" role="radiogroup" aria-label="Scale">
+                  <button role="radio" data-v="1">1×</button>
+                  <button role="radio" data-v="2">2×</button>
+                  <button role="radio" data-v="3">3×</button>
+                </div>
+              </div>
+              <p class="pop-note" id="export-note"></p>
+              <button class="btn ghost wide" id="btn-share" hidden>
+                <svg><use href="#i-share" /></svg><span>Share…</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <main class="stage" id="stage" aria-label="Canvas">
+        <div class="canvas-wrap" id="canvas-wrap">
+          <canvas id="view" role="img" aria-label="Preview of your framed screenshot"></canvas>
+          <textarea id="text-editor" class="text-editor" rows="1" spellcheck="false" aria-label="Label text" hidden></textarea>
+        </div>
+        <div class="stage-hint" id="stage-hint">
+          <span><kbd>Ctrl</kbd> <kbd>V</kbd> to paste a screenshot, drop a file, or</span>
+          <button class="link" id="hint-open">browse</button>
+          <span class="capture-only">·</span>
+          <button class="link capture-only" id="hint-capture">capture your screen</button>
+        </div>
+        <div class="drop-veil" id="drop-veil" aria-hidden="true"><span>Drop to frame it</span></div>
+      </main>
+
+      <aside class="panel" aria-label="Controls">
+        <div class="tabs" role="tablist">
+          <button role="tab" id="tab-style" aria-controls="panel-style" aria-selected="true">Style</button>
+          <button role="tab" id="tab-annotate" aria-controls="panel-annotate" aria-selected="false">
+            Annotate <span class="count" id="ann-count" hidden></span>
+          </button>
+        </div>
+
+        <div class="panel-body" id="panel-style" role="tabpanel" aria-labelledby="tab-style">
+          <section class="group">
+            <h2><span class="num">i</span>Looks</h2>
+            <div class="looks" id="looks"></div>
+          </section>
+
+          <section class="group">
+            <h2><span class="num">ii</span>Background</h2>
+            <div class="seg seg-sm" id="seg-bg" role="radiogroup" aria-label="Background type">
+              <button role="radio" data-v="mesh">Mesh</button>
+              <button role="radio" data-v="gradient">Gradient</button>
+              <button role="radio" data-v="solid">Solid</button>
+              <button role="radio" data-v="blur">Blur</button>
+              <button role="radio" data-v="image">Image</button>
+              <button role="radio" data-v="none" title="Transparent">None</button>
+            </div>
+            <div class="swatches" id="swatches"></div>
+            <label class="toggle">
+              <input type="checkbox" id="chk-grain" />
+              <span class="track"></span>
+              <span>Film grain</span>
+            </label>
+          </section>
+
+          <section class="group">
+            <h2><span class="num">iii</span>Frame</h2>
+            <div class="frames" id="frames"></div>
+            <input class="text-input" id="frame-title" type="text" maxlength="80" placeholder="Window title" hidden />
+          </section>
+
+          <section class="group">
+            <h2><span class="num">iv</span>Canvas</h2>
+            <div class="aspects" id="aspects"></div>
+            <div class="sliders">
+              <label class="slider"><span>Padding</span><output id="out-padding"></output><input type="range" id="rng-padding" min="0" max="30" step="1" /></label>
+              <label class="slider"><span>Corners</span><output id="out-radius"></output><input type="range" id="rng-radius" min="0" max="40" step="1" /></label>
+              <label class="slider"><span>Shadow</span><output id="out-shadow"></output><input type="range" id="rng-shadow" min="0" max="100" step="1" /></label>
+              <label class="slider"><span>Tilt</span><output id="out-tilt"></output><input type="range" id="rng-tilt" min="-30" max="30" step="1" /></label>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" id="chk-trim" />
+              <span class="track"></span>
+              <span>Trim empty edges</span>
+            </label>
+          </section>
+
+          <section class="group">
+            <h2><span class="num">v</span>Your styles</h2>
+            <div class="presets" id="presets"></div>
+            <button class="btn ghost wide" id="btn-save-style"><svg><use href="#i-plus" /></svg><span>Save current style</span></button>
+          </section>
+        </div>
+
+        <div class="panel-body" id="panel-annotate" role="tabpanel" aria-labelledby="tab-annotate" hidden>
+          <section class="group">
+            <h2><span class="num">i</span>Tools</h2>
+            <div class="tools" id="tools" role="toolbar" aria-label="Annotation tools"></div>
+          </section>
+          <section class="group">
+            <h2><span class="num">ii</span>Ink</h2>
+            <div class="inks" id="inks" role="radiogroup" aria-label="Color"></div>
+            <div class="seg seg-sm" id="seg-size" role="radiogroup" aria-label="Size">
+              <button role="radio" data-v="s">Fine</button>
+              <button role="radio" data-v="m">Regular</button>
+              <button role="radio" data-v="l">Bold</button>
+            </div>
+          </section>
+          <section class="group">
+            <p class="help" id="tool-help"></p>
+            <div class="row">
+              <button class="btn ghost" id="btn-delete" disabled><svg><use href="#i-trash" /></svg><span>Delete</span></button>
+              <button class="btn ghost" id="btn-clear" disabled><span>Clear all</span></button>
+            </div>
+            <p class="help subtle" id="tilt-note" hidden>Tilt pauses while you annotate and comes back on the Style tab.</p>
+          </section>
+        </div>
+
+        <footer class="panel-foot">
+          <span class="private"><svg><use href="#i-lock" /></svg>Runs in your browser. Nothing is uploaded.</span>
+          <button class="link" id="btn-keys">Shortcuts <kbd>?</kbd></button>
+        </footer>
+      </aside>
+    </div>
+
+    <input type="file" id="file-input" accept="image/*" hidden />
+    <input type="file" id="bg-input" accept="image/*" hidden />
+
+    <dialog class="sheet" id="keys-dialog" aria-labelledby="keys-title">
+      <form method="dialog">
+        <header>
+          <h2 id="keys-title">Shortcuts</h2>
+          <button class="icon-btn" aria-label="Close"><svg><use href="#i-x" /></svg></button>
+        </header>
+        <dl class="keys">
+          <div><dt><kbd>Ctrl</kbd><kbd>V</kbd></dt><dd>Paste a screenshot</dd></div>
+          <div><dt><kbd>Ctrl</kbd><kbd>C</kbd></dt><dd>Copy the framed image</dd></div>
+          <div><dt><kbd>Ctrl</kbd><kbd>S</kbd></dt><dd>Download</dd></div>
+          <div><dt><kbd>Ctrl</kbd><kbd>O</kbd></dt><dd>Open a file</dd></div>
+          <div><dt><kbd>Ctrl</kbd><kbd>Z</kbd></dt><dd>Undo (add <kbd>Shift</kbd> to redo)</dd></div>
+          <div><dt><kbd>V</kbd> <kbd>A</kbd> <kbd>R</kbd> <kbd>H</kbd></dt><dd>Select, arrow, box, highlight</dd></div>
+          <div><dt><kbd>T</kbd> <kbd>N</kbd> <kbd>B</kbd> <kbd>F</kbd></dt><dd>Text, step, redact, spotlight</dd></div>
+          <div><dt><kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd></dt><dd>Nudge selection (<kbd>Shift</kbd> for 10px)</dd></div>
+          <div><dt><kbd>Del</kbd></dt><dd>Delete selection</dd></div>
+          <div><dt><kbd>Esc</kbd></dt><dd>Deselect</dd></div>
+        </dl>
+      </form>
+    </dialog>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+      <defs>
+        <symbol id="i-mark" viewBox="0 0 32 32">
+          <rect x="3" y="3" width="26" height="26" rx="8" fill="currentColor" />
+          <rect x="9" y="11" width="14" height="11" rx="2.5" fill="none" stroke="var(--paper)" stroke-width="2" />
+          <path d="M9 8.5h6" stroke="var(--paper)" stroke-width="2" stroke-linecap="round" />
+        </symbol>
+        <symbol id="i-undo" viewBox="0 0 20 20"><path d="M7.5 5 4 8.5 7.5 12M4.5 8.5h7a4.5 4.5 0 0 1 0 9H9" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" /></symbol>
+        <symbol id="i-redo" viewBox="0 0 20 20"><path d="M12.5 5 16 8.5 12.5 12M15.5 8.5h-7a4.5 4.5 0 0 0 0 9H11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" /></symbol>
+        <symbol id="i-open" viewBox="0 0 20 20"><path d="M3 6.5V15a1.5 1.5 0 0 0 1.5 1.5h11A1.5 1.5 0 0 0 17 15V8a1.5 1.5 0 0 0-1.5-1.5H10L8.3 4.3a1 1 0 0 0-.8-.3h-3A1.5 1.5 0 0 0 3 5.5z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" /></symbol>
+        <symbol id="i-copy" viewBox="0 0 20 20"><rect x="7" y="7" width="10" height="10" rx="2" fill="none" stroke="currentColor" stroke-width="1.5" /><path d="M13 4.5A1.5 1.5 0 0 0 11.5 3h-7A1.5 1.5 0 0 0 3 4.5v7A1.5 1.5 0 0 0 4.5 13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" /></symbol>
+        <symbol id="i-download" viewBox="0 0 20 20"><path d="M10 3v9.5M6 9l4 4 4-4M4 16.5h12" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" /></symbol>
+        <symbol id="i-caret" viewBox="0 0 20 20"><path d="m6 8 4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" /></symbol>
+        <symbol id="i-share" viewBox="0 0 20 20"><path d="M10 12.5V3M6.5 6.5 10 3l3.5 3.5M5 10H4.5A1.5 1.5 0 0 0 3 11.5v4A1.5 1.5 0 0 0 4.5 17h11a1.5 1.5 0 0 0 1.5-1.5v-4a1.5 1.5 0 0 0-1.5-1.5H15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></symbol>
+        <symbol id="i-plus" viewBox="0 0 20 20"><path d="M10 4.5v11M4.5 10h11" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" /></symbol>
+        <symbol id="i-trash" viewBox="0 0 20 20"><path d="M4 6h12M8 6V4.5h4V6M5.5 6l.7 9.6a1.5 1.5 0 0 0 1.5 1.4h4.6a1.5 1.5 0 0 0 1.5-1.4L14.5 6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></symbol>
+        <symbol id="i-x" viewBox="0 0 20 20"><path d="m5.5 5.5 9 9m0-9-9 9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" /></symbol>
+        <symbol id="i-lock" viewBox="0 0 20 20"><rect x="4.5" y="9" width="11" height="8" rx="2" fill="none" stroke="currentColor" stroke-width="1.5" /><path d="M7 9V6.5a3 3 0 0 1 6 0V9" fill="none" stroke="currentColor" stroke-width="1.5" /></symbol>
+        <symbol id="t-select" viewBox="0 0 20 20"><path d="M5 3.5 15 9l-4.3 1.2L8.5 15z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" /></symbol>
+        <symbol id="t-arrow" viewBox="0 0 20 20"><path d="M4.5 15.5 15 5M8.5 5H15v6.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" /></symbol>
+        <symbol id="t-rect" viewBox="0 0 20 20"><rect x="3.5" y="5" width="13" height="10" rx="2" fill="none" stroke="currentColor" stroke-width="1.6" /></symbol>
+        <symbol id="t-highlight" viewBox="0 0 20 20"><path d="m7 13 7.5-7.5a1.4 1.4 0 0 0-2-2L5 11l-.5 2.5zM3 17h14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></symbol>
+        <symbol id="t-text" viewBox="0 0 20 20"><path d="M4.5 5.5v-1h11v1M10 4.5v11M7.5 15.5h5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" /></symbol>
+        <symbol id="t-step" viewBox="0 0 20 20"><circle cx="10" cy="10" r="6.5" fill="none" stroke="currentColor" stroke-width="1.5" /><path d="M9 8l1.5-1v6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></symbol>
+        <symbol id="t-redact" viewBox="0 0 20 20"><path d="M4 4h4v4H4zM12 4h4v4h-4zM8 8h4v4H8zM4 12h4v4H4zM12 12h4v4h-4z" fill="currentColor" opacity=".85" /></symbol>
+        <symbol id="t-focus" viewBox="0 0 20 20"><path d="M3.5 7V5a1.5 1.5 0 0 1 1.5-1.5h2M13 3.5h2A1.5 1.5 0 0 1 16.5 5v2M16.5 13v2a1.5 1.5 0 0 1-1.5 1.5h-2M7 16.5H5A1.5 1.5 0 0 1 3.5 15v-2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" /><circle cx="10" cy="10" r="2.5" fill="currentColor" /></symbol>
+      </defs>
+    </svg>
+  </body>
+</html>
