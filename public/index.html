@@ -64,6 +64,7 @@
               <div class="field">
                 <span class="field-label">Format</span>
                 <div class="seg" id="seg-format" role="radiogroup" aria-label="Format">
+                  <button role="radio" data-v="auto" title="PNG, or JPEG when a PNG would be over 5 MB">Auto</button>
                   <button role="radio" data-v="image/png">PNG</button>
                   <button role="radio" data-v="image/jpeg">JPEG</button>
                   <button role="radio" data-v="image/webp">WebP</button>
@@ -98,6 +99,15 @@
           <span class="capture-only">·</span>
           <button class="link capture-only" id="hint-capture">capture your screen</button>
         </div>
+        <div class="crop-bar" id="crop-bar" role="toolbar" aria-label="Crop" hidden>
+          <div class="crop-aspects" id="crop-aspects" role="radiogroup" aria-label="Crop ratio"></div>
+          <div class="crop-actions">
+            <button class="btn ghost" id="crop-trim" title="Snap to the content, dropping empty margins">Auto-trim</button>
+            <button class="btn ghost" id="crop-reset">Reset</button>
+            <button class="btn ghost" id="crop-cancel">Cancel <kbd>Esc</kbd></button>
+            <button class="btn primary" id="crop-apply">Apply <kbd>↵</kbd></button>
+          </div>
+        </div>
         <div class="drop-veil" id="drop-veil" aria-hidden="true"><span>Drop to frame it</span></div>
       </main>
 
@@ -117,13 +127,14 @@
 
           <section class="group">
             <h2><span class="num">ii</span>Background</h2>
-            <div class="seg seg-sm" id="seg-bg" role="radiogroup" aria-label="Background type">
-              <button role="radio" data-v="mesh">Mesh</button>
-              <button role="radio" data-v="gradient">Gradient</button>
-              <button role="radio" data-v="solid">Solid</button>
-              <button role="radio" data-v="blur">Blur</button>
-              <button role="radio" data-v="image">Image</button>
-              <button role="radio" data-v="none" title="Transparent">None</button>
+            <div class="aspects" id="seg-bg" role="radiogroup" aria-label="Background type">
+              <button class="chip match-chip" role="radio" data-v="match" title="Colours taken from your screenshot"><i class="spark"></i>Match</button>
+              <button class="chip" role="radio" data-v="mesh">Mesh</button>
+              <button class="chip" role="radio" data-v="gradient">Gradient</button>
+              <button class="chip" role="radio" data-v="solid">Solid</button>
+              <button class="chip" role="radio" data-v="blur">Blur</button>
+              <button class="chip" role="radio" data-v="image">Image</button>
+              <button class="chip" role="radio" data-v="none" title="Transparent">None</button>
             </div>
             <div class="swatches" id="swatches"></div>
             <label class="toggle">
@@ -141,7 +152,7 @@
               <label class="toggle">
                 <input type="checkbox" id="chk-dark-chrome" />
                 <span class="track"></span>
-                <span>Dark title bar</span>
+                <span id="dark-label">Dark title bar</span>
               </label>
             </div>
           </section>
@@ -155,15 +166,34 @@
               <label class="slider"><span>Shadow</span><output id="out-shadow"></output><input type="range" id="rng-shadow" min="0" max="100" step="1" /></label>
               <label class="slider"><span>Tilt</span><output id="out-tilt"></output><input type="range" id="rng-tilt" min="-30" max="30" step="1" /></label>
             </div>
+          </section>
+
+          <section class="group">
+            <h2><span class="num">v</span>Shot</h2>
+            <div class="row">
+              <button class="btn ghost grow" id="btn-crop" title="Crop (C)"><svg><use href="#i-crop" /></svg><span>Crop</span><span class="crop-state" id="crop-state"></span></button>
+              <button class="btn ghost grow" id="btn-center" title="Re-centre the shot"><svg><use href="#i-center" /></svg><span>Re-centre</span></button>
+            </div>
             <label class="toggle">
               <input type="checkbox" id="chk-trim" />
               <span class="track"></span>
               <span>Trim empty edges</span>
             </label>
+            <p class="help subtle">Drag the shot on the canvas to place it, or let it bleed off an edge. Double-click to re-centre.</p>
           </section>
 
           <section class="group">
-            <h2><span class="num">v</span>Your styles</h2>
+            <h2><span class="num">vi</span>Signature</h2>
+            <input class="text-input" id="badge-text" type="text" maxlength="40" placeholder="@yourhandle" autocomplete="off" spellcheck="false" />
+            <div class="seg seg-sm" id="seg-badge" role="radiogroup" aria-label="Badge position">
+              <button role="radio" data-v="left">Left</button>
+              <button role="radio" data-v="center">Centre</button>
+              <button role="radio" data-v="right">Right</button>
+            </div>
+          </section>
+
+          <section class="group">
+            <h2><span class="num">vii</span>Your styles</h2>
             <div class="presets" id="presets"></div>
             <button class="btn ghost wide" id="btn-save-style"><svg><use href="#i-plus" /></svg><span>Save current style</span></button>
           </section>
@@ -218,6 +248,7 @@
           <div><dt><kbd>V</kbd> <kbd>A</kbd> <kbd>R</kbd> <kbd>H</kbd></dt><dd>Select, arrow, box, highlight</dd></div>
           <div><dt><kbd>T</kbd> <kbd>N</kbd> <kbd>B</kbd> <kbd>F</kbd></dt><dd>Text, step, redact, spotlight</dd></div>
           <div><dt><kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd></dt><dd>Nudge selection (<kbd>Shift</kbd> for 10px)</dd></div>
+          <div><dt><kbd>C</kbd></dt><dd>Crop (<kbd>↵</kbd> apply, <kbd>Esc</kbd> cancel)</dd></div>
           <div><dt><kbd>Del</kbd></dt><dd>Delete selection</dd></div>
           <div><dt><kbd>Esc</kbd></dt><dd>Deselect</dd></div>
         </dl>
@@ -243,6 +274,8 @@
         <symbol id="i-plus" viewBox="0 0 20 20"><path d="M10 4.5v11M4.5 10h11" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" /></symbol>
         <symbol id="i-trash" viewBox="0 0 20 20"><path d="M4 6h12M8 6V4.5h4V6M5.5 6l.7 9.6a1.5 1.5 0 0 0 1.5 1.4h4.6a1.5 1.5 0 0 0 1.5-1.4L14.5 6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></symbol>
         <symbol id="i-x" viewBox="0 0 20 20"><path d="m5.5 5.5 9 9m0-9-9 9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" /></symbol>
+        <symbol id="i-crop" viewBox="0 0 20 20"><path d="M5.5 2.5v12h12M2.5 5.5h12v12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" /></symbol>
+        <symbol id="i-center" viewBox="0 0 20 20"><rect x="3" y="3" width="14" height="14" rx="3" fill="none" stroke="currentColor" stroke-width="1.5" /><rect x="7" y="7.5" width="6" height="5" rx="1" fill="currentColor" /></symbol>
         <symbol id="i-lock" viewBox="0 0 20 20"><rect x="4.5" y="9" width="11" height="8" rx="2" fill="none" stroke="currentColor" stroke-width="1.5" /><path d="M7 9V6.5a3 3 0 0 1 6 0V9" fill="none" stroke="currentColor" stroke-width="1.5" /></symbol>
         <symbol id="t-select" viewBox="0 0 20 20"><path d="M5 3.5 15 9l-4.3 1.2L8.5 15z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" /></symbol>
         <symbol id="t-arrow" viewBox="0 0 20 20"><path d="M4.5 15.5 15 5M8.5 5H15v6.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" /></symbol>

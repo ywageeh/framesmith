@@ -11,16 +11,6 @@ export const ASPECTS = [
   { id: '9:16', label: '9:16', ratio: 9 / 16, hint: 'Stories · Reels' },
 ];
 
-export const FRAMES = [
-  { id: 'none', label: 'None' },
-  { id: 'mac-light', label: 'macOS' },
-  { id: 'mac-dark', label: 'macOS dark' },
-  { id: 'browser-light', label: 'Browser' },
-  { id: 'browser-dark', label: 'Browser dark' },
-  { id: 'glass', label: 'Glass' },
-  { id: 'stack', label: 'Stack' },
-];
-
 export const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
 /** Scale unit so chrome looks the same on a 600px shot and a 4K one. */
@@ -28,9 +18,17 @@ export function unitFor(w, h) {
   return clamp(Math.max(w, h) / 1400, 0.45, 3);
 }
 
+/** Phone bezel thickness for a screen of the given width. */
+export const bezelFor = (imgW) => Math.max(6, Math.round(imgW * 0.034));
+
 /** Chrome thickness around the image for a frame, in base px. */
-export function chromeFor(frame, u) {
+export function chromeFor(frame, u, imgW = 0) {
   switch (frame) {
+    case 'phone-light':
+    case 'phone-dark': {
+      const b = bezelFor(imgW);
+      return { top: b, right: b, bottom: b, left: b };
+    }
     case 'mac-light':
     case 'mac-dark':
       return { top: Math.round(36 * u), right: 0, bottom: 0, left: 0 };
@@ -52,7 +50,7 @@ export function chromeFor(frame, u) {
  */
 export function computeLayout(imgW, imgH, style) {
   const u = unitFor(imgW, imgH);
-  const chrome = chromeFor(style.frame, u);
+  const chrome = chromeFor(style.frame, u, imgW);
   const cardW = imgW + chrome.left + chrome.right;
   const cardH = imgH + chrome.top + chrome.bottom;
   const pad = Math.round((clamp(style.padding, 0, 40) / 100) * Math.max(cardW, cardH));
@@ -67,9 +65,15 @@ export function computeLayout(imgW, imgH, style) {
   W = Math.round(W);
   H = Math.round(H);
 
-  const cardX = Math.round((W - cardW) / 2);
-  const cardY = Math.round((H - cardH) / 2);
-  const radius = Math.min((clamp(style.radius, 0, 48) * u), cardW / 2, cardH / 2);
+  // Optional offset (fractions of the canvas) lets the shot sit off-centre or bleed off an edge.
+  const ox = clamp(style.offset?.x || 0, -0.5, 0.5);
+  const oy = clamp(style.offset?.y || 0, -0.5, 0.5);
+  const cardX = Math.round((W - cardW) / 2 + ox * W);
+  const cardY = Math.round((H - cardH) / 2 + oy * H);
+  const phone = style.frame.startsWith('phone');
+  const radius = phone
+    ? Math.min(cardW, cardH) * 0.13
+    : Math.min(clamp(style.radius, 0, 48) * u, cardW / 2, cardH / 2);
 
   return {
     W,

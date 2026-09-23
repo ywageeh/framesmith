@@ -7,6 +7,9 @@ import {
 import { History } from './history.js';
 import { findTrim } from './trim.js';
 import { demoShot, demoAnnotations } from './demo.js';
+import { CROP_HANDLES, cropHandlePoints, resizeCrop, moveCrop, fitAspect, isFullCrop } from './crop.js';
+import { extractPalette, MATCH_VARIANTS } from './palette.js';
+import { loadSession, saveSession, clearSession } from './session.js';
 
 const $ = (s) => document.querySelector(s);
 const el = (tag, props = {}, ...kids) => {
@@ -28,13 +31,16 @@ const DEFAULT_STYLE = {
   shadow: 55,
   tilt: 0,
   trim: false,
+  offset: { x: 0, y: 0 },
+  badge: { text: '', pos: 'right' },
 };
 
 const LOOKS = [
+  { name: 'Match', style: { bg: { kind: 'match', variant: 'soft' }, grain: false, frame: 'mac-light', aspect: '16:9', padding: 10, radius: 12, shadow: 45, tilt: 0 } },
   { name: 'Launch', style: { bg: { kind: 'mesh', id: 'peach' }, grain: false, frame: 'mac-light', aspect: '16:9', padding: 9, radius: 12, shadow: 55, tilt: 0 } },
   { name: 'Night', style: { bg: { kind: 'mesh', id: 'aurora' }, grain: true, frame: 'mac-dark', aspect: '16:9', padding: 10, radius: 12, shadow: 70, tilt: -16 } },
   { name: 'Docs', style: { bg: { kind: 'solid', color: '#f4efe6' }, grain: false, frame: 'browser-light', aspect: 'auto', padding: 6, radius: 10, shadow: 30, tilt: 0 } },
-  { name: 'Glass', style: { bg: { kind: 'gradient', id: 'lagoon' }, grain: false, frame: 'glass', aspect: '4:3', padding: 10, radius: 18, shadow: 40, tilt: 0 } },
+
   { name: 'Poster', style: { bg: { kind: 'gradient', id: 'ember' }, grain: false, frame: 'stack', aspect: '4:5', padding: 12, radius: 14, shadow: 60, tilt: 0 } },
   { name: 'Echo', style: { bg: { kind: 'blur' }, grain: false, frame: 'none', aspect: '1.91:1', padding: 8, radius: 14, shadow: 60, tilt: 14 } },
 ];
@@ -70,10 +76,11 @@ const store = {
 
 const assets = new Map(); // id → { bitmap, w, h, name, trim }
 const saved = store.get('fs:style', {});
-const initialStyle = { ...DEFAULT_STYLE, ...saved };
+const initialStyle = { ...DEFAULT_STYLE, ...saved, badge: { ...DEFAULT_STYLE.badge, ...saved.badge } };
 if (initialStyle.bg.kind === 'image') initialStyle.bg = DEFAULT_STYLE.bg;
 
-let doc = { style: initialStyle, annotations: [], imageId: null };
+// crop: source-pixel rect or null (whole image). Annotations live in cropped-shot space.
+let doc = { style: initialStyle, annotations: [], imageId: null, crop: null };
 let history = null;
 
 const ui = {
@@ -85,20 +92,22 @@ const ui = {
   editingId: null,
   draft: null,
   drag: null,
-  exportType: store.get('fs:type', 'image/png'),
+  exportType: store.get('fs:format', 'auto'),
   exportScale: store.get('fs:scale', 1),
   view: null, // { L, fit }
   userImage: false,
+  crop: null, // crop mode: { rect, aspectId, drag }
+  guides: null, // snap guides while dragging the shot
 };
 
-const lastBgId = { mesh: 'peach', gradient: 'ember', solid: '#f4efe6' };
+const lastBgId = { mesh: 'peach', gradient: 'ember', solid: '#f4efe6', match: 'soft' };
 
 const uid = () => Math.random().toString(36).slice(2, 10);
 
 function shotFor(d = doc) {
   const a = assets.get(d.imageId);
-  const t = d.style.trim ? a.trim : { x: 0, y: 0, w: a.w, h: a.h };
-  return { bitmap: a.bitmap, sx: t.x, sy: t.y, w: t.w, h: t.h };
+  const t = d.crop || { x: 0, y: 0, w: a.w, h: a.h };
+  return { bitmap: a.bitmap, sx: t.x, sy: t.y, w: t.w, h: t.h, palette: a.palette };
 }
 
 /** Replace the document. `record` pushes an undo step. */
@@ -111,6 +120,7 @@ function commit(next, record = true) {
   store.set('fs:style', doc.style);
   scheduleRender();
   syncUI();
+  scheduleSave();
 }
 
 function setStyle(patch, record = true) {
@@ -159,24 +169,52 @@ function computeTrim(bitmap, w, h) {
   };
 }
 
-function addImage(bitmap, name, { user = true } = {}) {
+function computePalette(bitmap, w, h) {
+  const k = Math.min(1, 72 / Math.max(w, h));
+  const c = el('canvas', { width: Math.max(1, Math.round(w * k)), height: Math.max(1, Math.round(h * k)) });
+  const x = c.getContext('2d', { willReadFrequently: true });
+  x.drawImage(bitmap, 0, 0, c.width, c.height);
+  return extractPalette(x.getImageData(0, 0, c.width, c.height).data);
+}
+
+function makeAsset(bitmap, name, blob = null) {
   const w = bitmap.width;
   const h = bitmap.height;
+  return { bitmap, w, h, name, blob, trim: computeTrim(bitmap, w, h), palette: computePalette(bitmap, w, h) };
+}
+
+/** Add a screenshot and make it current. Returns its id and a note about automatic choices. */
+function addImage(bitmap, name, { user = true, blob = null } = {}) {
   const id = 'img-' + uid();
-  assets.set(id, { bitmap, w, h, name, trim: computeTrim(bitmap, w, h) });
+  const asset = makeAsset(bitmap, name, blob);
+  assets.set(id, asset);
   ui.selectedId = null;
+  let style = doc.style;
+  let note = '';
   if (user) {
     ui.userImage = true;
     $('#stage-hint').classList.add('quiet');
   }
-  const next = { ...doc, imageId: id, annotations: [] };
+  // Pick a frame that suits the shape: phones for tall shots, windows for wide ones.
+  const fam = familyOf(style.frame);
+  if (asset.h / asset.w >= 1.5 && (fam === 'mac' || fam === 'browser')) {
+    style = { ...style, frame: 'phone-dark' };
+    note = ' · phone frame';
+  } else if (asset.w / asset.h > 1.05 && fam === 'phone') {
+    style = { ...style, frame: 'mac-light' };
+    note = ' · window frame';
+  }
+  const trimmed = style.trim && !isFullCrop(asset.trim, asset.w, asset.h) ? { ...asset.trim } : null;
+  const next = { ...doc, style, imageId: id, annotations: [], crop: trimmed };
   if (!history) {
     doc = next;
     history = new History(doc);
     scheduleRender();
     syncUI();
+    scheduleSave();
   } else commit(next);
   renderThumbs();
+  return { id, note };
 }
 
 async function loadBlob(blob, name = 'image') {
@@ -186,11 +224,60 @@ async function loadBlob(blob, name = 'image') {
   }
   try {
     const bmp = await toBitmap(blob);
-    addImage(bmp, name.replace(/\.[^.]+$/, ''));
-    toast(`Loaded ${bmp.width} × ${bmp.height}`);
+    const hadImage = !!history;
+    const { note } = addImage(bmp, name.replace(/\.[^.]+$/, ''), { blob });
+    toast(`Loaded ${bmp.width} × ${bmp.height}${note}`, hadImage ? { label: 'Undo', run: undo } : null);
   } catch {
     toast('Couldn’t read that image');
   }
+}
+
+/* ---------------------------------------------------------------- session */
+
+let saveTimer = 0;
+function scheduleSave() {
+  if (!ui.userImage) return;
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(async () => {
+    const images = {};
+    const ids = [doc.imageId];
+    if (doc.style.bg.kind === 'image') ids.push(doc.style.bg.assetId);
+    for (const id of ids) {
+      const a = assets.get(id);
+      if (!a || !a.blob) return; // not ready yet (e.g. a capture still encoding)
+      images[id] = { blob: a.blob, name: a.name };
+    }
+    await saveSession({ v: 1, doc, images, ts: Date.now() });
+  }, 500);
+}
+
+async function restoreSession(sess) {
+  if (!sess || sess.v !== 1 || !sess.images?.[sess.doc?.imageId]) return false;
+  try {
+    for (const [id, img] of Object.entries(sess.images)) {
+      const bmp = await toBitmap(img.blob);
+      assets.set(id, makeAsset(bmp, img.name, img.blob));
+    }
+  } catch {
+    return false;
+  }
+  const st = sess.doc.style || {};
+  const style = { ...DEFAULT_STYLE, ...st, badge: { ...DEFAULT_STYLE.badge, ...st.badge } };
+  if (style.bg.kind === 'image' && !assets.has(style.bg.assetId)) style.bg = DEFAULT_STYLE.bg;
+  doc = { ...sess.doc, style, crop: sess.doc.crop || null, annotations: sess.doc.annotations || [] };
+  history = new History(doc);
+  ui.userImage = true;
+  $('#stage-hint').classList.add('quiet');
+  store.set('fs:style', doc.style);
+  return true;
+}
+
+function startFresh() {
+  clearSession();
+  ui.userImage = false;
+  $('#stage-hint').classList.remove('quiet');
+  addImage(demoShot(), 'framesmith-sample', { user: false });
+  setAnnotations(demoAnnotations());
 }
 
 async function captureScreen() {
@@ -202,8 +289,16 @@ async function captureScreen() {
     const c = el('canvas', { width: video.videoWidth, height: video.videoHeight });
     c.getContext('2d').drawImage(video, 0, 0);
     stream.getTracks().forEach((t) => t.stop());
-    addImage(c, 'capture');
-    toast('Captured');
+    const { id, note } = addImage(c, 'capture');
+    toast(`Captured${note}`, { label: 'Undo', run: undo });
+    // Keep a PNG copy so the capture survives a reload.
+    c.toBlob((b) => {
+      const a = assets.get(id);
+      if (a && b) {
+        a.blob = b;
+        scheduleSave();
+      }
+    }, 'image/png');
   } catch (e) {
     if (e && e.name !== 'NotAllowedError') toast('Screen capture isn’t available here');
   }
@@ -228,28 +323,86 @@ function scheduleRender() {
   }, 150);
 }
 
-function draw() {
-  raf = 0;
-  clearTimeout(rafFallback);
-  if (!doc.imageId) return;
-  const shot = shotFor();
-  const L = computeLayout(shot.w, shot.h, doc.style);
+function stageFit(W, H) {
   const rect = stage.getBoundingClientRect();
   const mobile = rect.width < 600;
   const m = mobile ? 14 : 44;
   const avW = rect.width - m * 2;
-  const avH = rect.height - m * 2 - (mobile ? 36 : 56);
-  const fit = Math.max(0.05, Math.min(avW / L.W, avH / L.H, 2));
+  // Leave room for whatever floats at the bottom of the stage (hint pill or crop toolbar).
+  const avH = rect.height - m * 2 - (ui.crop ? (rect.width < 760 ? 150 : 96) : mobile ? 36 : 56);
+  return Math.max(0.05, Math.min(avW / W, avH / H, 2));
+}
+
+function sizeView(W, H, fit) {
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   const s = fit * dpr;
-  const cw = Math.round(L.W * s);
-  const ch = Math.round(L.H * s);
+  const cw = Math.round(W * s);
+  const ch = Math.round(H * s);
   if (view.width !== cw || view.height !== ch) {
     view.width = cw;
     view.height = ch;
   }
-  view.style.width = `${L.W * fit}px`;
-  view.style.height = `${L.H * fit}px`;
+  view.style.width = `${W * fit}px`;
+  view.style.height = `${H * fit}px`;
+  return s;
+}
+
+/** Crop mode: the whole source image with the crop rectangle on top. */
+function drawCrop() {
+  const a = assets.get(doc.imageId);
+  const fit = stageFit(a.w, a.h);
+  const s = sizeView(a.w, a.h, fit);
+  const ctx = vctx;
+  const r = ui.crop.rect;
+  ctx.save();
+  ctx.clearRect(0, 0, view.width, view.height);
+  ctx.scale(s, s);
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(a.bitmap, 0, 0);
+  ctx.fillStyle = 'rgba(18, 14, 10, 0.62)';
+  ctx.beginPath();
+  ctx.rect(0, 0, a.w, a.h);
+  ctx.rect(r.x, r.y, r.w, r.h);
+  ctx.fill('evenodd');
+  const px = 1 / s;
+  ctx.strokeStyle = 'rgba(255,255,255,0.45)';
+  ctx.lineWidth = px;
+  ctx.beginPath();
+  for (const t of [1 / 3, 2 / 3]) {
+    ctx.moveTo(r.x + r.w * t, r.y);
+    ctx.lineTo(r.x + r.w * t, r.y + r.h);
+    ctx.moveTo(r.x, r.y + r.h * t);
+    ctx.lineTo(r.x + r.w, r.y + r.h * t);
+  }
+  ctx.stroke();
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = 2 * px;
+  ctx.strokeRect(r.x, r.y, r.w, r.h);
+  const hp = cropHandlePoints(r);
+  for (const id of CROP_HANDLES) {
+    const p = hp[id];
+    const corner = id.length === 2;
+    const hw = (corner ? 14 : id === 'n' || id === 's' ? 22 : 6) * px;
+    const hh = (corner ? 14 : id === 'e' || id === 'w' ? 22 : 6) * px;
+    ctx.fillStyle = '#ffffff';
+    ctx.shadowColor = 'rgba(0,0,0,0.35)';
+    ctx.shadowBlur = 4;
+    ctx.fillRect(p.x - hw / 2, p.y - hh / 2, hw, hh);
+  }
+  ctx.restore();
+  ui.view = { mode: 'crop', fit, a };
+  $('#dims').textContent = `Crop ${r.w} × ${r.h}`;
+}
+
+function draw() {
+  raf = 0;
+  clearTimeout(rafFallback);
+  if (!doc.imageId) return;
+  if (ui.crop) return drawCrop();
+  const shot = shotFor();
+  const L = computeLayout(shot.w, shot.h, doc.style);
+  const fit = stageFit(L.W, L.H);
+  const s = sizeView(L.W, L.H, fit);
 
   let annotations = doc.annotations;
   if (ui.editingId) annotations = annotations.filter((a) => a.id !== ui.editingId);
@@ -260,6 +413,24 @@ function draw() {
     flat,
     selectedId: flat ? ui.selectedId : null,
   });
+  if (ui.guides) {
+    // Centre guides while the shot snaps into place.
+    vctx.save();
+    vctx.strokeStyle = '#ff5a36';
+    vctx.lineWidth = Math.max(1, s);
+    vctx.setLineDash([6 * s, 5 * s]);
+    vctx.beginPath();
+    if (ui.guides.x) {
+      vctx.moveTo((L.W / 2) * s, 0);
+      vctx.lineTo((L.W / 2) * s, L.H * s);
+    }
+    if (ui.guides.y) {
+      vctx.moveTo(0, (L.H / 2) * s);
+      vctx.lineTo(L.W * s, (L.H / 2) * s);
+    }
+    vctx.stroke();
+    vctx.restore();
+  }
   ui.view = { L, fit, shot };
   stage.dataset.transparent = String(doc.style.bg.kind === 'none');
   $('#dims').textContent = `${L.W} × ${L.H}`;
@@ -292,7 +463,7 @@ function renderThumbs() {
   thumbTimer = setTimeout(() => {
     document.querySelectorAll('[data-look]').forEach((b) => {
       const look = LOOKS[+b.dataset.look];
-      renderInto(b.querySelector('canvas'), look.style);
+      renderInto(b.querySelector('canvas'), adaptLook(look.style));
     });
     document.querySelectorAll('[data-preset]').forEach((b) => {
       const p = presets.find((x) => x.id === b.dataset.preset);
@@ -314,11 +485,18 @@ function buildLooks() {
     b.dataset.look = i;
     b.append(el('canvas'), el('span', { textContent: look.name }));
     b.addEventListener('click', () => {
-      setStyle({ ...look.style, frameTitle: doc.style.frameTitle });
-      toast(`${look.name} look applied`);
+      setStyle({ ...adaptLook(look.style), frameTitle: doc.style.frameTitle });
+      toast(`${look.name} look applied`, { label: 'Undo', run: undo });
     });
     host.append(b);
   });
+}
+
+/** Looks are designed for desktop shots; on a tall phone screenshot, swap window chrome for a phone. */
+function adaptLook(style) {
+  const a = assets.get(doc.imageId);
+  if (!a || a.h / a.w < 1.5 || !/^(mac|browser)-/.test(style.frame)) return style;
+  return { ...style, frame: 'phone-dark' };
 }
 
 function styleMatches(style) {
@@ -329,7 +507,7 @@ let swatchKey = '';
 function buildSwatches() {
   const { bg } = doc.style;
   // Rebuild only when the background actually changes, and never under an open color picker.
-  const key = JSON.stringify(bg);
+  const key = JSON.stringify(bg) + (bg.kind === 'match' ? doc.imageId : '');
   if (key === swatchKey || ui.pickingColor) return;
   swatchKey = key;
   const host = $('#swatches');
@@ -346,7 +524,16 @@ function buildSwatches() {
     host.append(b);
   };
   const pretty = (id) => id.replace(/-/g, ' ');
-  if (bg.kind === 'mesh') {
+  if (bg.kind === 'match') {
+    const palette = assets.get(doc.imageId)?.palette;
+    MATCH_VARIANTS.forEach((v) =>
+      swatch(bg.variant === v.id, (x) => paintBackground(x, 64, 64, { kind: 'match', variant: v.id }, { palette }), `${v.label}, from your screenshot`, () => {
+        lastBgId.match = v.id;
+        setStyle({ bg: { kind: 'match', variant: v.id } });
+      }),
+    );
+    host.append(el('p', { className: 'swatch-note', textContent: 'Built from the colours in your screenshot, so it always belongs.' }));
+  } else if (bg.kind === 'mesh') {
     MESHES.forEach((m) =>
       swatch(bg.id === m.id, (x) => paintBackground(x, 64, 64, { kind: 'mesh', id: m.id }), pretty(m.id), () => {
         lastBgId.mesh = m.id;
@@ -425,6 +612,8 @@ function frameSvg(id) {
       return shell(`<rect x="4" y="2" width="56" height="40" rx="5" fill="${body}" stroke="${line}"/><path d="M4 7a5 5 0 0 1 5-5h46a5 5 0 0 1 5 5v8H4z" fill="${bar}"/>${dots}<rect x="26" y="5" width="28" height="6" rx="2" fill="${dark ? '#1e1e22' : '#fff'}" stroke="${line}" stroke-width=".6"/>`);
     case 'glass':
       return shell(`<rect x="2" y="2" width="60" height="40" rx="7" fill="#ffffff" fill-opacity=".45" stroke="#ffffff"/><rect x="7" y="7" width="50" height="30" rx="3" fill="${body}" stroke="${line}"/>`);
+    case 'phone':
+      return shell(`<rect x="23" y="2" width="18" height="40" rx="5" fill="#1d1d20"/><rect x="24.6" y="3.6" width="14.8" height="36.8" rx="3.6" fill="${body === '#ffffff' ? '#f4f1ec' : body}"/><rect x="29" y="5" width="6" height="1.8" rx=".9" fill="#1d1d20"/>`);
     case 'stack':
       return shell(`<rect x="12" y="2" width="40" height="30" rx="4" fill="${body}" fill-opacity=".45" stroke="${line}"/><rect x="8" y="6" width="48" height="32" rx="4" fill="${body}" fill-opacity=".75" stroke="${line}"/><rect x="4" y="10" width="56" height="32" rx="4" fill="${body}" stroke="${line}"/>`);
   }
@@ -435,11 +624,13 @@ const FRAME_FAMILIES = [
   { id: 'none', label: 'None' },
   { id: 'mac', label: 'macOS' },
   { id: 'browser', label: 'Browser' },
+  { id: 'phone', label: 'Phone' },
   { id: 'glass', label: 'Glass' },
   { id: 'stack', label: 'Stack' },
 ];
 const familyOf = (frame) => frame.replace(/-(light|dark)$/, '');
-const hasChrome = (frame) => /^(mac|browser)-/.test(frame);
+const hasChrome = (frame) => /^(mac|browser|phone)-/.test(frame);
+const hasTitle = (frame) => /^(mac|browser)-/.test(frame);
 
 function buildFrames() {
   const host = $('#frames');
@@ -451,7 +642,10 @@ function buildFrames() {
     b.innerHTML = `<span class="ft">${frameSvg(preview)}</span><span>${f.label}</span>`;
     b.addEventListener('click', () => {
       const dark = doc.style.frame.endsWith('-dark');
-      setStyle({ frame: f.id === 'mac' || f.id === 'browser' ? `${f.id}-${dark ? 'dark' : 'light'}` : f.id });
+      let frame = f.id;
+      if (f.id === 'mac' || f.id === 'browser') frame = `${f.id}-${dark ? 'dark' : 'light'}`;
+      if (f.id === 'phone') frame = doc.style.frame === 'phone-light' ? 'phone-light' : 'phone-dark';
+      setStyle({ frame });
     });
     host.append(b);
   });
@@ -595,7 +789,7 @@ function buildTools() {
   $('#btn-clear').addEventListener('click', () => {
     ui.selectedId = null;
     setAnnotations([]);
-    toast('Annotations cleared. Undo brings them back.');
+    toast('Annotations cleared', { label: 'Undo', run: undo });
   });
 }
 
@@ -623,6 +817,7 @@ function setTab(tab) {
 }
 
 function setTool(tool) {
+  if (ui.crop) exitCrop();
   commitTextEditor();
   ui.tool = tool;
   if (tool !== 'select') ui.selectedId = null;
@@ -642,12 +837,21 @@ function syncUI() {
   $('#panel-annotate').hidden = ui.tab !== 'annotate';
 
   radios($('#seg-bg'), style.bg.kind);
+  radios($('#seg-badge'), style.badge?.pos || 'right');
+  const badgeInput = $('#badge-text');
+  if (document.activeElement !== badgeInput) badgeInput.value = style.badge?.text || '';
+  $('#seg-badge').hidden = !(style.badge?.text || '').trim();
+  const off = style.offset || { x: 0, y: 0 };
+  $('#btn-center').disabled = !off.x && !off.y;
+  $('#btn-crop').classList.toggle('on', !!doc.crop);
+  $('#crop-state').textContent = doc.crop ? `${doc.crop.w} × ${doc.crop.h}` : '';
   buildSwatches();
   $('#chk-grain').checked = style.grain;
   $('#chk-grain').disabled = style.bg.kind === 'none';
   radios($('#frames'), familyOf(style.frame));
-  const titled = hasChrome(style.frame);
-  $('#chrome-opts').hidden = !titled;
+  $('#chrome-opts').hidden = !hasChrome(style.frame);
+  $('#frame-title').hidden = !hasTitle(style.frame);
+  $('#dark-label').textContent = style.frame.startsWith('phone') ? 'Black finish' : 'Dark title bar';
   $('#chk-dark-chrome').checked = style.frame.endsWith('-dark');
   const title = $('#frame-title');
   title.placeholder = style.frame.startsWith('browser') ? 'framesmith.app' : 'Window title (optional)';
@@ -661,7 +865,7 @@ function syncUI() {
   }
   $('#chk-trim').checked = !!style.trim;
   document.querySelectorAll('[data-look]').forEach((b) => {
-    b.setAttribute('aria-pressed', String(styleMatches(LOOKS[+b.dataset.look].style)));
+    b.setAttribute('aria-pressed', String(styleMatches(adaptLook(LOOKS[+b.dataset.look].style))));
   });
 
   radios($('#tools'), ui.tool, 'aria-pressed');
@@ -682,8 +886,9 @@ function syncUI() {
 
   radios($('#seg-format'), ui.exportType);
   radios($('#seg-scale'), ui.exportScale);
-  const ext = { 'image/png': 'PNG', 'image/jpeg': 'JPEG', 'image/webp': 'WebP' }[ui.exportType];
-  $('#export-label').textContent = `Export ${ext}`;
+  const ext = { auto: '', 'image/png': ' PNG', 'image/jpeg': ' JPEG', 'image/webp': ' WebP' }[ui.exportType] ?? '';
+  $('#export-label').textContent = `Export${ext}`;
+  $('#app').dataset.mode = ui.crop ? 'crop' : '';
 }
 
 function updateExportNote() {
@@ -694,15 +899,34 @@ function updateExportNote() {
   const h = Math.round(L.H * k);
   let note = `${w} × ${h} px`;
   if (k < ui.exportScale) note += ' · capped to stay within browser limits';
+  if (ui.exportType === 'auto') note += ' · PNG, or JPEG if a PNG would top X’s 5 MB limit';
   if (ui.exportType === 'image/jpeg' && doc.style.bg.kind === 'none') note += ' · JPEG has no transparency, so the background will be white';
   $('#export-note').textContent = note;
 }
 
 /* ================================================================== export */
 
-function exportOpts(type = ui.exportType) {
+function exportOpts(type) {
   const { L } = ui.view;
   return { type, scale: safeScale(L.W, L.H, ui.exportScale), quality: 0.93 };
+}
+
+const LIMIT = 5 * 1048576; // X's image upload limit
+const fmtSize = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+
+/** Render the export. "auto" keeps PNG unless it would be too heavy to post. */
+async function produceExport() {
+  const shot = shotFor();
+  if (ui.exportType !== 'auto') {
+    const opts = exportOpts(ui.exportType);
+    return { blob: await exportBlob(doc, shot, assets, opts), type: opts.type, scale: opts.scale, note: '' };
+  }
+  const opts = exportOpts('image/png');
+  const png = await exportBlob(doc, shot, assets, opts);
+  if (png.size <= LIMIT) return { blob: png, type: 'image/png', scale: opts.scale, note: '' };
+  const type = doc.style.bg.kind === 'none' ? 'image/webp' : 'image/jpeg';
+  const blob = await exportBlob(doc, shot, assets, { ...opts, type, quality: 0.92 });
+  return { blob, type, scale: opts.scale, note: ` (PNG would be ${fmtSize(png.size)})` };
 }
 
 function filename(ext) {
@@ -714,23 +938,21 @@ function filename(ext) {
 }
 
 async function download() {
-  if (!ui.view) return;
+  if (!ui.view || ui.crop) return;
   commitTextEditor();
-  const opts = exportOpts();
   try {
-    const blob = await exportBlob(doc, shotFor(), assets, opts);
-    const ext = opts.type.split('/')[1].replace('jpeg', 'jpg');
+    const { blob, type, scale, note } = await produceExport();
+    const ext = type.split('/')[1].replace('jpeg', 'jpg');
     const a = el('a', { href: URL.createObjectURL(blob), download: filename(ext) });
     document.body.append(a);
     a.click();
     a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 4000);
-    const mb = blob.size / 1048576;
-    const size = mb >= 1 ? `${mb.toFixed(1)} MB` : `${Math.max(1, Math.round(blob.size / 1024))} KB`;
+    const { L } = ui.view;
     toast(
-      mb > 5 && opts.type === 'image/png'
-        ? `Saved ${size} PNG. Over 5 MB: WebP is several times smaller`
-        : `Saved ${Math.round(ui.view.L.W * opts.scale)} × ${Math.round(ui.view.L.H * opts.scale)} ${ext.toUpperCase()} · ${size}`,
+      blob.size > LIMIT
+        ? `Saved ${fmtSize(blob.size)} ${ext.toUpperCase()}. Over 5 MB: choose WebP or 1× to post on X`
+        : `Saved ${Math.round(L.W * scale)} × ${Math.round(L.H * scale)} ${ext.toUpperCase()} · ${fmtSize(blob.size)}${note}`,
     );
   } catch {
     toast('Export failed. Try a smaller size.');
@@ -744,6 +966,7 @@ async function copy() {
     toast('This browser can’t copy images. Use Export instead.');
     return;
   }
+  if (ui.crop) return;
   const opts = exportOpts('image/png');
   try {
     // Safari needs the promise handed over inside the gesture; Firefox only accepts a Blob.
@@ -753,17 +976,17 @@ async function copy() {
     } catch {
       await navigator.clipboard.write([new ClipboardItem({ 'image/png': await pending })]);
     }
-    toast('Copied. Paste it anywhere.');
+    const size = (await pending).size;
+    toast(size > LIMIT ? `Copied (${fmtSize(size)}). X may compress it; Export picks a lighter format` : 'Copied. Paste it anywhere.');
   } catch {
     toast('Copy was blocked. Use Export instead.');
   }
 }
 
 async function share() {
-  const opts = exportOpts();
-  const blob = await exportBlob(doc, shotFor(), assets, opts);
-  const ext = opts.type.split('/')[1].replace('jpeg', 'jpg');
-  const file = new File([blob], filename(ext), { type: opts.type });
+  const { blob, type } = await produceExport();
+  const ext = type.split('/')[1].replace('jpeg', 'jpg');
+  const file = new File([blob], filename(ext), { type });
   try {
     await navigator.share({ files: [file] });
   } catch {
@@ -771,7 +994,148 @@ async function share() {
   }
 }
 
+/* ================================================================== crop mode */
+
+const CROP_ASPECTS = [
+  { id: 'free', label: 'Free' },
+  { id: 'original', label: 'Original' },
+  { id: '16:9', label: '16:9', ratio: 16 / 9 },
+  { id: '4:3', label: '4:3', ratio: 4 / 3 },
+  { id: '1:1', label: '1:1', ratio: 1 },
+  { id: '4:5', label: '4:5', ratio: 4 / 5 },
+  { id: '9:16', label: '9:16', ratio: 9 / 16 },
+];
+
+function cropRatio() {
+  const a = assets.get(doc.imageId);
+  const c = CROP_ASPECTS.find((x) => x.id === ui.crop?.aspectId);
+  if (!c || c.id === 'free') return null;
+  return c.id === 'original' ? a.w / a.h : c.ratio;
+}
+
+function enterCrop() {
+  if (ui.crop || !doc.imageId) return;
+  commitTextEditor();
+  const a = assets.get(doc.imageId);
+  ui.crop = { rect: doc.crop ? { ...doc.crop } : { x: 0, y: 0, w: a.w, h: a.h }, aspectId: 'free', drag: null };
+  ui.selectedId = null;
+  syncCropBar();
+  syncUI();
+  scheduleRender();
+}
+
+function exitCrop() {
+  ui.crop = null;
+  ui.drag = null;
+  syncCropBar();
+  syncUI();
+  scheduleRender();
+}
+
+/** Change the crop (and optionally style) in one undo step, keeping annotations pinned. */
+function setCrop(rect, stylePatch = {}) {
+  const a = assets.get(doc.imageId);
+  const next = isFullCrop(rect, a.w, a.h) ? null : rect;
+  const before = shotFor();
+  const after = shotFor({ ...doc, crop: next });
+  const dx = before.sx - after.sx;
+  const dy = before.sy - after.sy;
+  commit({
+    ...doc,
+    crop: next,
+    style: { ...doc.style, ...stylePatch },
+    annotations: doc.annotations.map((x) => moveBy(x, dx, dy)),
+  });
+}
+
+function applyCrop() {
+  if (!ui.crop) return;
+  const r = ui.crop.rect;
+  const a = assets.get(doc.imageId);
+  const had = !!doc.crop;
+  exitCrop();
+  if (isFullCrop(r, a.w, a.h)) {
+    if (had) {
+      setCrop(null);
+      toast('Crop removed', { label: 'Undo', run: undo });
+    }
+    return;
+  }
+  setCrop(r);
+  toast(`Cropped to ${r.w} × ${r.h}`, { label: 'Undo', run: undo });
+}
+
+function syncCropBar() {
+  const bar = $('#crop-bar');
+  bar.hidden = !ui.crop;
+  $('#stage-hint').hidden = !!ui.crop;
+  if (ui.crop) radios($('#crop-aspects'), ui.crop.aspectId);
+}
+
+function buildCropBar() {
+  const host = $('#crop-aspects');
+  CROP_ASPECTS.forEach((c) => {
+    const b = el('button', { className: 'chip', type: 'button', textContent: c.label });
+    b.dataset.v = c.id;
+    b.setAttribute('role', 'radio');
+    b.addEventListener('click', () => {
+      ui.crop.aspectId = c.id;
+      const a = assets.get(doc.imageId);
+      ui.crop.rect = fitAspect(ui.crop.rect, cropRatio(), a.w, a.h);
+      syncCropBar();
+      scheduleRender();
+    });
+    host.append(b);
+  });
+  $('#crop-trim').addEventListener('click', () => {
+    const a = assets.get(doc.imageId);
+    if (isFullCrop(a.trim, a.w, a.h)) return toast('No empty edges found on this image');
+    ui.crop.aspectId = 'free';
+    ui.crop.rect = { ...a.trim };
+    syncCropBar();
+    scheduleRender();
+  });
+  $('#crop-reset').addEventListener('click', () => {
+    const a = assets.get(doc.imageId);
+    ui.crop.aspectId = 'free';
+    ui.crop.rect = { x: 0, y: 0, w: a.w, h: a.h };
+    syncCropBar();
+    scheduleRender();
+  });
+  $('#crop-cancel').addEventListener('click', exitCrop);
+  $('#crop-apply').addEventListener('click', applyCrop);
+  $('#btn-crop').addEventListener('click', enterCrop);
+  $('#btn-center').addEventListener('click', () => setStyle({ offset: { x: 0, y: 0 } }));
+}
+
+const toSource = (e) => {
+  const r = view.getBoundingClientRect();
+  return { x: (e.clientX - r.left) / ui.view.fit, y: (e.clientY - r.top) / ui.view.fit };
+};
+
+function cropHit(p) {
+  const r = ui.crop.rect;
+  const tol = 14 / ui.view.fit;
+  const hp = cropHandlePoints(r);
+  const h = CROP_HANDLES.find((id) => Math.abs(hp[id].x - p.x) <= tol && Math.abs(hp[id].y - p.y) <= tol);
+  if (h) return h;
+  if (p.x > r.x && p.x < r.x + r.w && p.y > r.y && p.y < r.y + r.h) return 'move';
+  return null;
+}
+
+const CURSORS = { nw: 'nwse-resize', se: 'nwse-resize', ne: 'nesw-resize', sw: 'nesw-resize', n: 'ns-resize', s: 'ns-resize', e: 'ew-resize', w: 'ew-resize', move: 'move' };
+
 /* ================================================================== canvas interaction */
+
+/** Base-pixel point on the composition (for dragging the shot around). */
+const toBase = (e) => {
+  const r = view.getBoundingClientRect();
+  return { x: (e.clientX - r.left) / ui.view.fit, y: (e.clientY - r.top) / ui.view.fit };
+};
+const onCard = (p) => {
+  const c = ui.view.L.card;
+  return p.x >= c.x && p.x <= c.x + c.w && p.y >= c.y && p.y <= c.y + c.h;
+};
 
 function toImage(e) {
   const { L, fit } = ui.view;
@@ -805,9 +1169,29 @@ function snap(start, p, e, kind) {
 
 view.addEventListener('pointerdown', (e) => {
   if (!ui.view || e.button > 0) return;
+  if (ui.crop) {
+    const a = assets.get(doc.imageId);
+    const p = toSource(e);
+    const hit = cropHit(p);
+    if (hit === 'move') ui.drag = { kind: 'crop-move', start: p, orig: { ...ui.crop.rect } };
+    else if (hit) ui.drag = { kind: 'crop-resize', handle: hit, orig: { ...ui.crop.rect } };
+    else {
+      // Start a fresh rectangle from here.
+      const x = Math.max(0, Math.min(a.w - 1, p.x));
+      const y = Math.max(0, Math.min(a.h - 1, p.y));
+      ui.drag = { kind: 'crop-resize', handle: 'se', orig: { x, y, w: 1, h: 1 } };
+    }
+    view.setPointerCapture(e.pointerId);
+    e.preventDefault();
+    return;
+  }
   if (ui.tab !== 'annotate') {
-    // With a mouse, clicking the canvas is a shortcut into annotating; on touch it's just a scroll.
-    if (e.pointerType === 'mouse') setTab('annotate');
+    // Style tab: drag the shot to reposition it on the canvas.
+    const p = toBase(e);
+    if (!onCard(p)) return;
+    ui.drag = { kind: 'offset', cx: e.clientX, cy: e.clientY, orig: { ...(doc.style.offset || { x: 0, y: 0 }) } };
+    stage.dataset.hover = 'grabbing';
+    view.setPointerCapture(e.pointerId);
     return;
   }
   commitTextEditor();
@@ -845,7 +1229,40 @@ view.addEventListener('pointerdown', (e) => {
 });
 
 view.addEventListener('pointermove', (e) => {
-  if (!ui.view || ui.tab !== 'annotate') return;
+  if (!ui.view) return;
+  if (ui.crop) {
+    const a = assets.get(doc.imageId);
+    const p = toSource(e);
+    const d = ui.drag;
+    if (!d) {
+      stage.style.setProperty('--crop-cursor', CURSORS[cropHit(p)] || 'crosshair');
+      return;
+    }
+    if (d.kind === 'crop-move') ui.crop.rect = moveCrop(d.orig, p.x - d.start.x, p.y - d.start.y, a.w, a.h);
+    else ui.crop.rect = resizeCrop(d.orig, d.handle, p, cropRatio(), a.w, a.h);
+    scheduleRender();
+    return;
+  }
+  if (ui.tab !== 'annotate') {
+    const d = ui.drag;
+    if (d?.kind === 'offset') {
+      const { L, fit } = ui.view;
+      let x = d.orig.x + (e.clientX - d.cx) / fit / L.W;
+      let y = d.orig.y + (e.clientY - d.cy) / fit / L.H;
+      const snapX = Math.abs(x) < 0.012;
+      const snapY = Math.abs(y) < 0.012;
+      if (snapX) x = 0;
+      if (snapY) y = 0;
+      x = Math.max(-0.5, Math.min(0.5, x));
+      y = Math.max(-0.5, Math.min(0.5, y));
+      ui.guides = snapX || snapY ? { x: snapX, y: snapY } : null;
+      doc = { ...doc, style: { ...doc.style, offset: { x, y } } };
+      scheduleRender();
+    } else if (!d) {
+      stage.dataset.hover = onCard(toBase(e)) ? 'grab' : '';
+    }
+    return;
+  }
   const p = toImage(e);
   const d = ui.drag;
   if (!d) {
@@ -872,6 +1289,13 @@ function endDrag() {
   const d = ui.drag;
   if (!d) return;
   ui.drag = null;
+  if (d.kind === 'crop-move' || d.kind === 'crop-resize') return;
+  if (d.kind === 'offset') {
+    ui.guides = null;
+    stage.dataset.hover = 'grab';
+    commit(doc);
+    return;
+  }
   if (d.kind === 'draw') {
     const a = ui.draft;
     ui.draft = null;
@@ -887,7 +1311,11 @@ view.addEventListener('pointerup', endDrag);
 view.addEventListener('pointercancel', endDrag);
 
 view.addEventListener('dblclick', (e) => {
-  if (ui.tab !== 'annotate') return;
+  if (ui.crop) return applyCrop();
+  if (ui.tab !== 'annotate') {
+    if (ui.view && onCard(toBase(e))) setStyle({ offset: { x: 0, y: 0 } });
+    return;
+  }
   const p = toImage(e);
   const a = pick(doc.annotations.filter((x) => x.type === 'text'), p, iuNow(), tolNow(), measureText);
   if (a) openTextEditor(a);
@@ -978,6 +1406,7 @@ function undo() {
     syncUI();
     scheduleRender();
     renderThumbs();
+    scheduleSave();
   }
 }
 function redo() {
@@ -989,21 +1418,38 @@ function redo() {
     syncUI();
     scheduleRender();
     renderThumbs();
+    scheduleSave();
   }
 }
 
 let toastTimer = 0;
-function toast(msg) {
+/** Status message; `action` = { label, run } adds a button (e.g. Undo). */
+function toast(msg, action = null) {
   const t = $('#toast');
-  t.textContent = msg;
+  t.replaceChildren(el('span', { textContent: msg }));
+  if (action) {
+    const b = el('button', { type: 'button', textContent: action.label });
+    b.addEventListener('click', () => {
+      t.classList.remove('show');
+      action.run();
+    });
+    t.append(b);
+  }
+  t.classList.toggle('actionable', !!action);
   t.classList.add('show');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => t.classList.remove('show'), 2200);
+  toastTimer = setTimeout(() => t.classList.remove('show'), action ? 5000 : 2400);
 }
 
 function wire() {
-  $('#tab-style').addEventListener('click', () => setTab('style'));
-  $('#tab-annotate').addEventListener('click', () => setTab('annotate'));
+  $('#tab-style').addEventListener('click', () => {
+    if (ui.crop) exitCrop();
+    setTab('style');
+  });
+  $('#tab-annotate').addEventListener('click', () => {
+    if (ui.crop) exitCrop();
+    setTab('annotate');
+  });
   $('#btn-undo').addEventListener('click', undo);
   $('#btn-redo').addEventListener('click', redo);
 
@@ -1049,20 +1495,23 @@ function wire() {
       }
     } else if (kind === 'solid') setStyle({ bg: { kind, color: lastBgId.solid } });
     else if (kind === 'mesh' || kind === 'gradient') setStyle({ bg: { kind, id: lastBgId[kind] } });
+    else if (kind === 'match') setStyle({ bg: { kind, variant: lastBgId.match } });
     else setStyle({ bg: { kind } });
   });
   $('#chk-grain').addEventListener('change', (e) => setStyle({ grain: e.target.checked }));
   $('#chk-trim').addEventListener('change', (e) => {
-    // Keep annotations pinned to the same pixels when the crop changes.
-    const before = shotFor();
-    const style = { ...doc.style, trim: e.target.checked };
-    const after = shotFor({ ...doc, style });
-    const dx = before.sx - after.sx;
-    const dy = before.sy - after.sy;
-    commit({ ...doc, style, annotations: doc.annotations.map((a) => moveBy(a, dx, dy)) });
     const a = assets.get(doc.imageId);
-    if (e.target.checked && a.trim.w === a.w && a.trim.h === a.h) toast('No empty edges found on this image');
+    const on = e.target.checked;
+    setCrop(on ? { ...a.trim } : null, { trim: on });
+    if (on && isFullCrop(a.trim, a.w, a.h)) toast('No empty edges on this one. New screenshots get trimmed automatically');
     renderThumbs();
+  });
+  const badge = $('#badge-text');
+  badge.addEventListener('input', () => setStyle({ badge: { ...doc.style.badge, text: badge.value } }, false));
+  badge.addEventListener('change', () => setStyle({ badge: { ...doc.style.badge, text: badge.value } }));
+  $('#seg-badge').addEventListener('click', (e) => {
+    const v = e.target.closest('[data-v]')?.dataset.v;
+    if (v) setStyle({ badge: { ...doc.style.badge, pos: v } });
   });
   $('#btn-save-style').addEventListener('click', saveStyle);
 
@@ -1085,7 +1534,7 @@ function wire() {
     const v = e.target.closest('[data-v]')?.dataset.v;
     if (!v) return;
     ui.exportType = v;
-    store.set('fs:type', v);
+    store.set('fs:format', v);
     syncUI();
     updateExportNote();
   });
@@ -1150,6 +1599,16 @@ function wire() {
     const typing = /INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName) && document.activeElement.type !== 'range' && document.activeElement.type !== 'checkbox';
     const mod = e.metaKey || e.ctrlKey;
     const k = e.key.toLowerCase();
+    if (ui.crop) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        applyCrop();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        exitCrop();
+      }
+      return;
+    }
     if (mod && k === 'z' && !typing) {
       e.preventDefault();
       e.shiftKey ? redo() : undo();
@@ -1169,6 +1628,8 @@ function wire() {
       return;
     } else if (e.key === '?') {
       keys.showModal();
+    } else if (k === 'c') {
+      enterCrop();
     } else if (e.key === 'Escape') {
       if (!pop.hidden) setPop(false);
       else if (ui.selectedId) {
@@ -1227,15 +1688,26 @@ async function boot() {
   buildAspects();
   buildSliders();
   buildTools();
+  buildCropBar();
   buildPresets();
   wire();
+  syncUI();
   try {
     await Promise.race([document.fonts.ready, new Promise((r) => setTimeout(r, 1500))]);
     await document.fonts.load('600 20px Geist');
   } catch {
     /* system font fallback */
   }
-  // A file may already have arrived (Open with…, share target) while fonts loaded.
+  // Bring back the last session unless a file has already arrived (Open with…, share target).
+  const params = new URLSearchParams(location.search);
+  if (!ui.userImage && !params.has('fresh') && !params.has('shared')) {
+    if (await restoreSession(await loadSession())) {
+      scheduleRender();
+      syncUI();
+      renderThumbs();
+      toast('Welcome back. Your last shot is restored', { label: 'Start fresh', run: startFresh });
+    }
+  }
   if (!ui.userImage) {
     addImage(demoShot(), 'framesmith-sample', { user: false });
     // Show what annotations look like before anyone has to discover the tab.

@@ -1,5 +1,7 @@
 // Background presets and painters. Everything is procedural: no image assets to download.
 
+import { matchBackground } from './palette.js';
+
 export const GRADIENTS = [
   { id: 'ember', angle: 135, stops: ['#ff9a5a', '#ff4f6d'] },
   { id: 'apricot', angle: 160, stops: ['#ffe3c2', '#ffb08a', '#f7806b'] },
@@ -173,9 +175,18 @@ function cover(ctx, src, W, H) {
  * Paint a background. `bg` = { kind, id?, color?, assetId? }.
  * `ctx` space is W×H in device pixels. `shot` is the screenshot (for the blur kind).
  */
-export function paintBackground(ctx, W, H, bg, { shot, assets, grainOn } = {}) {
+export function paintBackground(ctx, W, H, bg, { shot, assets, grainOn, palette } = {}) {
   ctx.save();
   switch (bg.kind) {
+    case 'match': {
+      const spec = matchBackground(palette || { hues: [], neutral: true }, bg.variant);
+      if (spec.kind === 'mesh') mesh(ctx, W, H, spec);
+      else {
+        ctx.fillStyle = linear(ctx, W, H, spec.angle, spec.stops);
+        ctx.fillRect(0, 0, W, H);
+      }
+      break;
+    }
     case 'gradient': {
       const g = GRADIENTS.find((x) => x.id === bg.id) || GRADIENTS[0];
       ctx.fillStyle = linear(ctx, W, H, g.angle, g.stops);
@@ -219,7 +230,11 @@ export function paintBackground(ctx, W, H, bg, { shot, assets, grainOn } = {}) {
 }
 
 /** Perceived luminance of a background, to pick contrasting UI details. */
-export function isDarkBackground(bg) {
+export function isDarkBackground(bg, palette) {
+  if (bg.kind === 'match') {
+    const spec = matchBackground(palette || { hues: [], neutral: true }, bg.variant);
+    bg = spec.kind === 'mesh' ? { kind: 'solid', color: spec.base } : { kind: 'solid', color: spec.stops[0] };
+  }
   const hex =
     bg.kind === 'solid'
       ? bg.color

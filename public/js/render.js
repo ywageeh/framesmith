@@ -2,7 +2,7 @@
 // One code path draws both the live preview (small scale) and the export (1–3x).
 
 import { computeLayout, tiltProjector, tiltQuad, MAX_PIXELS } from './layout.js';
-import { paintBackground } from './backgrounds.js';
+import { paintBackground, isDarkBackground } from './backgrounds.js';
 import { inkUnit, fontSize, textBox, stepRadius, SIZES, handles, bounds } from './annotations.js';
 
 const FONT = '"Geist", system-ui, -apple-system, "Segoe UI", sans-serif';
@@ -205,10 +205,46 @@ function trafficLights(ctx, x, cy, u) {
   });
 }
 
+function paintPhone(ctx, style, L) {
+  const dark = style.frame.endsWith('dark');
+  const { w, h } = L.card;
+  const g = ctx.createLinearGradient(0, 0, w, h);
+  if (dark) {
+    g.addColorStop(0, '#3a3a3f');
+    g.addColorStop(0.5, '#17171a');
+    g.addColorStop(1, '#2c2c30');
+  } else {
+    g.addColorStop(0, '#f4f2ee');
+    g.addColorStop(0.5, '#d4d0c9');
+    g.addColorStop(1, '#e9e6e0');
+  }
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, w, h);
+  // Inner black rim between the metal band and the glass.
+  const b = L.chrome.left;
+  const rim = b * 0.42;
+  rr(ctx, b - rim, b - rim, w - 2 * (b - rim), h - 2 * (b - rim), Math.max(0, L.radius - (b - rim)));
+  ctx.fillStyle = '#0b0b0d';
+  ctx.fill();
+}
+
+/** Dynamic-island pill over the top of the screen. */
+function paintIsland(ctx, shotW) {
+  const iw = shotW * 0.29;
+  const ih = shotW * 0.085;
+  rr(ctx, (shotW - iw) / 2, shotW * 0.028, iw, ih, ih / 2);
+  ctx.fillStyle = '#060607';
+  ctx.fill();
+}
+
 function paintChrome(ctx, style, L, u) {
   const { frame, frameTitle } = style;
   const w = L.card.w;
   const tb = L.chrome.top;
+  if (frame.startsWith('phone')) {
+    paintPhone(ctx, style, L);
+    return;
+  }
   if (frame.startsWith('mac') || frame.startsWith('browser')) {
     const dark = frame.endsWith('dark');
     const g = ctx.createLinearGradient(0, 0, 0, tb);
@@ -284,8 +320,9 @@ function renderCard(doc, shot, L, s, selectedId) {
   // Shot region (with its own rounding for inner corners).
   const ix = L.chrome.left;
   const iy = L.chrome.top;
+  const phone = style.frame.startsWith('phone');
   const innerR =
-    style.frame === 'glass'
+    style.frame === 'glass' || phone
       ? Math.max(0, r - L.chrome.left)
       : L.chrome.top
         ? [0, 0, r, r]
@@ -298,9 +335,9 @@ function renderCard(doc, shot, L, s, selectedId) {
   ctx.drawImage(shot.bitmap, shot.sx || 0, shot.sy || 0, shot.w, shot.h, 0, 0, shot.w, shot.h);
   if (doc.annotations.length) {
     // Redactions sample the (cropped) source pixels.
-    const src = shot.sx || shot.sy ? cropped(shot) : shot.bitmap;
-    drawAnnotations(ctx, src, doc.annotations, shot.w, shot.h, s);
+    drawAnnotations(ctx, sourceOf(shot), doc.annotations, shot.w, shot.h, s);
   }
+  if (phone && style.island !== false) paintIsland(ctx, shot.w);
   const sel = selectedId && doc.annotations.find((a) => a.id === selectedId);
   if (sel) drawSelection(ctx, sel, shot.w, shot.h, s);
   ctx.restore();
@@ -309,9 +346,23 @@ function renderCard(doc, shot, L, s, selectedId) {
   rr(ctx, 0.5 / s, 0.5 / s, L.card.w - 1 / s, L.card.h - 1 / s, r);
   ctx.lineWidth = Math.max(1 / s, u * 0.8);
   ctx.strokeStyle =
-    style.frame === 'glass' ? 'rgba(255,255,255,0.55)' : style.frame.endsWith('dark') ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)';
+    style.frame === 'glass'
+      ? 'rgba(255,255,255,0.55)'
+      : phone
+        ? style.frame.endsWith('dark')
+          ? 'rgba(255,255,255,0.22)'
+          : 'rgba(0,0,0,0.18)'
+        : style.frame.endsWith('dark')
+          ? 'rgba(255,255,255,0.1)'
+          : 'rgba(0,0,0,0.08)';
   ctx.stroke();
   return c;
+}
+
+/** The pixels actually on show: the crop when there is one, else the bitmap itself. */
+function sourceOf(shot) {
+  const b = shot.bitmap;
+  return shot.sx || shot.sy || shot.w !== b.width || shot.h !== b.height ? cropped(shot) : b;
 }
 
 const cropCache = new WeakMap();
@@ -350,6 +401,38 @@ function castShadow(ctx, path, strength, unit) {
   }
 }
 
+/* ------------------------------------------------------------------ badge */
+
+/** Signature pill ("@handle") in a bottom corner of the canvas. */
+function paintBadge(ctx, style, L, s, palette) {
+  const text = (style.badge?.text || '').trim();
+  if (!text) return;
+  const m = Math.min(L.W, L.H);
+  const fs = Math.max(12, Math.min(64, m * 0.026));
+  ctx.save();
+  ctx.scale(s, s);
+  ctx.font = `600 ${fs}px ${FONT}`;
+  const tw = Math.min(ctx.measureText(text).width, L.W * 0.6);
+  const padX = fs * 0.8;
+  const h = fs * 2;
+  const w = tw + padX * 2;
+  const margin = Math.max(fs, m * 0.035);
+  const pos = style.badge?.pos || 'right';
+  const x = pos === 'left' ? margin : pos === 'center' ? (L.W - w) / 2 : L.W - margin - w;
+  const y = L.H - margin - h;
+  const dark = isDarkBackground(style.bg, palette);
+  rr(ctx, x, y, w, h, h / 2);
+  ctx.fillStyle = dark ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.72)';
+  ctx.fill();
+  ctx.lineWidth = Math.max(1, fs * 0.06);
+  ctx.strokeStyle = dark ? 'rgba(255,255,255,0.22)' : 'rgba(0,0,0,0.06)';
+  ctx.stroke();
+  ctx.fillStyle = dark ? '#ffffff' : '#1d1a17';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, x + padX, y + h / 2 + fs * 0.04, tw);
+  ctx.restore();
+}
+
 /* ------------------------------------------------------------------ main */
 
 /**
@@ -365,9 +448,10 @@ export function render(ctx, doc, shot, assets, opts = {}) {
   ctx.clearRect(0, 0, W, H);
 
   paintBackground(ctx, W, H, style.bg, {
-    shot: shot.sx || shot.sy ? cropped(shot) : shot.bitmap,
+    shot: sourceOf(shot),
     assets,
     grainOn: style.grain,
+    palette: shot.palette,
   });
 
   const tilt = opts.flat ? 0 : style.tilt || 0;
@@ -408,6 +492,7 @@ export function render(ctx, doc, shot, assets, opts = {}) {
   if (!tilt) {
     castShadow(ctx, () => rr(ctx, cx, cy, cw, ch, r), style.shadow, unit);
     ctx.drawImage(card, cx, cy);
+    paintBadge(ctx, style, L, s, shot.palette);
     return L;
   }
 
@@ -456,6 +541,7 @@ export function render(ctx, doc, shot, assets, opts = {}) {
   ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(layer, cx, cy, cw, ch);
   ctx.restore();
+  paintBadge(ctx, style, L, s, shot.palette);
   return L;
 }
 
