@@ -374,6 +374,8 @@ kbd {
   display: block;
   border-radius: 4px;
   box-shadow: 0 30px 60px -30px oklch(25% 0.04 50 / 0.35);
+}
+.app[data-tab='annotate'] #view {
   touch-action: none;
 }
 .stage[data-transparent='true'] #view {

@@ -104,7 +104,10 @@ function shotFor(d = doc) {
 /** Replace the document. `record` pushes an undo step. */
 function commit(next, record = true) {
   doc = next;
-  if (record && history) history.push(doc);
+  if (record && history) {
+    history.push(doc);
+    renderThumbs();
+  }
   store.set('fs:style', doc.style);
   scheduleRender();
   syncUI();
@@ -255,7 +258,7 @@ function draw() {
   render(vctx, { ...doc, annotations }, shot, assets, {
     s,
     flat,
-    selectedId: flat && ui.tool === 'select' ? ui.selectedId : flat ? ui.selectedId : null,
+    selectedId: flat ? ui.selectedId : null,
   });
   ui.view = { L, fit, shot };
   stage.dataset.transparent = String(doc.style.bg.kind === 'none');
@@ -322,10 +325,15 @@ function styleMatches(style) {
   return Object.entries(style).every(([k, v]) => JSON.stringify(doc.style[k]) === JSON.stringify(v));
 }
 
+let swatchKey = '';
 function buildSwatches() {
+  const { bg } = doc.style;
+  // Rebuild only when the background actually changes, and never under an open color picker.
+  const key = JSON.stringify(bg);
+  if (key === swatchKey || ui.pickingColor) return;
+  swatchKey = key;
   const host = $('#swatches');
   host.replaceChildren();
-  const { bg } = doc.style;
   const swatch = (checked, paint, label, onClick) => {
     const b = el('button', { className: 'swatch', type: 'button', title: label });
     b.setAttribute('role', 'radio');
@@ -368,8 +376,12 @@ function buildSwatches() {
     } else add.innerHTML = '<svg><use href="#i-plus"/></svg>';
     const input = el('input', { type: 'color', value: custom ? bg.color : '#ff5a36' });
     input.setAttribute('aria-label', 'Custom color');
-    input.addEventListener('input', () => setStyle({ bg: { kind: 'solid', color: input.value } }, false));
+    input.addEventListener('input', () => {
+      ui.pickingColor = true;
+      setStyle({ bg: { kind: 'solid', color: input.value } }, false);
+    });
     input.addEventListener('change', () => {
+      ui.pickingColor = false;
       lastBgId.solid = input.value;
       setStyle({ bg: { kind: 'solid', color: input.value } });
     });
@@ -444,6 +456,7 @@ function buildFrames() {
     host.append(b);
   });
   $('#chk-dark-chrome').addEventListener('change', (e) => {
+    if (!hasChrome(doc.style.frame)) return;
     const fam = familyOf(doc.style.frame);
     setStyle({ frame: `${fam}-${e.target.checked ? 'dark' : 'light'}` });
   });
@@ -733,8 +746,13 @@ async function copy() {
   }
   const opts = exportOpts('image/png');
   try {
-    // Hand the promise straight to ClipboardItem: Safari requires it within the gesture.
-    await navigator.clipboard.write([new ClipboardItem({ 'image/png': exportBlob(doc, shotFor(), assets, opts) })]);
+    // Safari needs the promise handed over inside the gesture; Firefox only accepts a Blob.
+    const pending = exportBlob(doc, shotFor(), assets, opts);
+    try {
+      await navigator.clipboard.write([new ClipboardItem({ 'image/png': pending })]);
+    } catch {
+      await navigator.clipboard.write([new ClipboardItem({ 'image/png': await pending })]);
+    }
     toast('Copied. Paste it anywhere.');
   } catch {
     toast('Copy was blocked. Use Export instead.');
@@ -788,7 +806,8 @@ function snap(start, p, e, kind) {
 view.addEventListener('pointerdown', (e) => {
   if (!ui.view || e.button > 0) return;
   if (ui.tab !== 'annotate') {
-    setTab('annotate');
+    // With a mouse, clicking the canvas is a shortcut into annotating; on touch it's just a scroll.
+    if (e.pointerType === 'mouse') setTab('annotate');
     return;
   }
   commitTextEditor();
@@ -1216,11 +1235,13 @@ async function boot() {
   } catch {
     /* system font fallback */
   }
-  const demo = demoShot();
-  addImage(demo, 'framesmith-sample', { user: false });
-  // Show what annotations look like before anyone has to discover the tab.
-  doc = { ...doc, annotations: demoAnnotations() };
-  history = new History(doc);
+  // A file may already have arrived (Open with…, share target) while fonts loaded.
+  if (!ui.userImage) {
+    addImage(demoShot(), 'framesmith-sample', { user: false });
+    // Show what annotations look like before anyone has to discover the tab.
+    doc = { ...doc, annotations: demoAnnotations() };
+    history = new History(doc);
+  }
   if (new URLSearchParams(location.search).get('tab') === 'annotate') setTab('annotate');
   syncUI();
   scheduleRender();
