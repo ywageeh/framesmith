@@ -62,7 +62,7 @@ uploads nothing and is fast enough to stay part of your posting routine.
 ## How it's built
 
 Zero runtime dependencies and zero build step: plain ES modules, one stylesheet and a
-`<canvas>`. The whole app is about 35 KB gzipped.
+`<canvas>`. The whole app is under 50 KB gzipped.
 
 ```
 public/
