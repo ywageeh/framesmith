@@ -1139,7 +1139,7 @@ input[type='range'].centered::-moz-range-track {
   }
   .app {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: var(--bar-h) minmax(300px, 52dvh) auto;
+    grid-template-rows: var(--bar-h) minmax(260px, min(52dvh, calc(78vw + 70px))) auto;
     grid-template-areas: 'bar' 'stage' 'panel';
     height: auto;
     min-height: 100dvh;
@@ -1188,6 +1188,10 @@ input[type='range'].centered::-moz-range-track {
   }
   .touch-only {
     display: inline;
+    white-space: nowrap;
+  }
+  .tool kbd {
+    display: none;
   }
 }
 
